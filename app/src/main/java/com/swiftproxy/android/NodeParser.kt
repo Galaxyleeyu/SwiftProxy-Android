@@ -74,7 +74,7 @@ object NodeParser {
 
     private fun parseShadowsocks(value: String): ProxyNode? {
         val uri = URI(value)
-        val raw = uri.rawAuthority ?: uri.rawSchemeSpecificPart.removePrefix("//").substringBefore('#')
+        val raw = uri.rawSchemeSpecificPart.removePrefix("//").substringBefore('#')
         val beforeQuery = raw.substringBefore('?')
         val at = beforeQuery.lastIndexOf('@')
 
