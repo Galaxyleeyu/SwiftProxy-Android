@@ -81,6 +81,8 @@ class SwiftProxyVpnService : VpnService() {
                 publishState(this, "starting", "正在启动 sing-box 核心")
                 runCatching {
                     val instance = SingBoxEngine(this) {
+                        stopTrafficMonitor()
+                        engine = null
                         publishState(this, "disconnected", "代理已停止")
                     }
                     engine = instance
