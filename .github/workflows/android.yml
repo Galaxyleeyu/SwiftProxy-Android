@@ -37,10 +37,13 @@ jobs:
       - name: Run libbox emulator tests
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: 34
           arch: x86_64
           target: google_apis
-          profile: Nexus 6
+          profile: Pixel_2
+          cores: 4
+          emulator-boot-timeout: 900
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -no-metrics
           disable-animations: true
           script: gradle connectedDebugAndroidTest
 
