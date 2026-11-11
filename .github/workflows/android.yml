@@ -29,7 +29,7 @@ jobs:
       - name: Decode launcher icon
         run: |
           mkdir -p app/src/main/res/drawable-nodpi
-          base64 --decode app/src/main/res/drawable-nodpi/swiftproxy_icon.jpg.b64 > app/src/main/res/drawable-nodpi/swiftproxy_icon.jpg
+          base64 --decode build-assets/swiftproxy_icon.jpg.b64 > app/src/main/res/drawable-nodpi/swiftproxy_icon.jpg
 
       - name: Build debug APK
         run: gradle assembleDebug
