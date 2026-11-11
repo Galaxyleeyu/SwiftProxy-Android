@@ -14,6 +14,7 @@ class NodeParserTest {
         assertNotNull(node)
         assertEquals("VLESS", node?.type)
         assertEquals("example.com", node?.server)
+        assertEquals(443, node?.port)
         assertEquals("primary", node?.name)
     }
 
@@ -23,6 +24,7 @@ class NodeParserTest {
         assertNotNull(node)
         assertEquals("TROJAN", node?.type)
         assertEquals("example.net", node?.server)
+        assertEquals(8443, node?.port)
         assertEquals("backup", node?.name)
     }
 
