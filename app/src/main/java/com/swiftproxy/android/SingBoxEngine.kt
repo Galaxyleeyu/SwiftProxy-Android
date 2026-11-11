@@ -317,7 +317,7 @@ internal class SingBoxEngine(
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) return
         forEachIterator(iterator) { value ->
             val route = parseRoute(value) ?: return@forEachIterator
-            runCatching { builder.excludeRoute(android.net.IpPrefix(route.first, route.second)) }
+            runCatching { builder.excludeRoute(android.net.IpPrefix(route.first + "/" + route.second)) }
                 .onFailure { Log.w(TAG, "Unable to exclude VPN route: $value", it) }
         }
     }
