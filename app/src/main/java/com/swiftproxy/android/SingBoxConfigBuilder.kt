@@ -107,13 +107,21 @@ object SingBoxConfigBuilder {
             query["fp"] = json.optString("fp")
         }
         val network = json.optString("net").lowercase()
-        if (network == "ws") {
-            query["type"] = "ws"
-            query["path"] = json.optString("path")
-            query["host"] = json.optString("host")
-        } else if (network == "grpc") {
-            query["type"] = "grpc"
-            query["serviceName"] = json.optString("path")
+        when (network) {
+            "ws" -> {
+                query["type"] = "ws"
+                query["path"] = json.optString("path")
+                query["host"] = json.optString("host")
+            }
+            "grpc" -> {
+                query["type"] = "grpc"
+                query["serviceName"] = json.optString("path")
+            }
+            "httpupgrade" -> {
+                query["type"] = "httpupgrade"
+                query["path"] = json.optString("path")
+                query["host"] = json.optString("host")
+            }
         }
         addTransport(outbound, query)
         addTls(outbound, query, defaultEnabled = false)
