@@ -1,362 +1,82 @@
 package com.swiftproxy.android
 
-import android.content.Context
 import android.net.VpnService
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
-import android.net.Network
-import android.net.LinkProperties
-import android.system.OsConstants
-import android.os.Process
-import java.net.NetworkInterface
-import java.net.InetAddress
-import java.net.InetSocketAddress
 import android.util.Log
-import java.lang.reflect.Proxy
+import io.nekohasekai.libbox.CommandServer
+import io.nekohasekai.libbox.CommandServerHandler
+import io.nekohasekai.libbox.Libbox
+import io.nekohasekai.libbox.Notification
+import io.nekohasekai.libbox.OverrideOptions
+import io.nekohasekai.libbox.SetupOptions
+import io.nekohasekai.libbox.SystemProxyStatus
 
 /**
- * Thin reflection adapter around libbox's generated Java API.
- * Reflection keeps the app source independent from generated Go method names,
- * while still using the official CommandServer/PlatformInterface contracts.
+ * Owns the native sing-box command server and its Android VPN platform adapter.
+ * Calls are typed against libbox instead of relying on generated-API reflection.
  */
 internal class SingBoxEngine(
     private val service: VpnService,
     private val onStopped: () -> Unit
-) {
+) : CommandServerHandler {
+
     companion object {
         private const val TAG = "SwiftProxyCore"
         @Volatile private var setupCompleted = false
+
+        private fun setupLibbox(service: VpnService) {
+            if (setupCompleted) return
+            synchronized(SingBoxEngine::class.java) {
+                if (setupCompleted) return
+                val workingDir = service.getExternalFilesDir(null) ?: service.filesDir
+                workingDir.mkdirs()
+                service.filesDir.mkdirs()
+                service.cacheDir.mkdirs()
+                Libbox.setup(
+                    SetupOptions().apply {
+                        basePath = service.filesDir.absolutePath
+                        workingPath = workingDir.absolutePath
+                        tempPath = service.cacheDir.absolutePath
+                        fixAndroidStack = true
+                        logMaxLines = 3000
+                        debug = false
+                        appVersion = "5"
+                        appMarketingVersion = "0.6.0"
+                    }
+                )
+                setupCompleted = true
+            }
+        }
     }
 
-    private var commandServer: Any? = null
-    private var stopping = false
-    private var handlerProxy: Any? = null
-    private var platformProxy: Any? = null
-    private var tunDescriptor: android.os.ParcelFileDescriptor? = null
-    private var networkCallback: ConnectivityManager.NetworkCallback? = null
-    private var interfaceListener: Any? = null
+    private var commandServer: CommandServer? = null
+    private var platform: SwiftProxyPlatformInterface? = null
+    private var activeConfig: String? = null
+    @Volatile private var stopping = false
 
     fun start(config: String) {
         check(commandServer == null) { "代理核心已经启动" }
+        setupLibbox(service)
+        Libbox.checkConfig(config)
+
         stopping = false
-        setupLibbox()
-        validateConfig(config)
-        val loader = service.classLoader
-        val handlerClass = Class.forName("io.nekohasekai.libbox.CommandServerHandler", true, loader)
-        val platformClass = Class.forName("io.nekohasekai.libbox.PlatformInterface", true, loader)
-        handlerProxy = Proxy.newProxyInstance(loader, arrayOf(handlerClass)) { _, method, args ->
-            when (method.name) {
-                "serviceStop" -> stop()
-                "serviceReload" -> Log.i(TAG, "Core requested reload")
-                "writeDebugMessage" -> Log.d(TAG, args?.firstOrNull()?.toString().orEmpty())
-                "triggerNativeCrash" -> Log.e(TAG, "Native crash callback received")
-                "connectSSHAgent" -> -1
-                else -> defaultValue(method.returnType)
-            }
-        }
-        platformProxy = Proxy.newProxyInstance(loader, arrayOf(platformClass)) { _, method, args ->
-            when (method.name) {
-                "usePlatformAutoDetectInterfaceControl" -> true
-                "autoDetectInterfaceControl" -> {
-                    val fd = (args?.firstOrNull() as? Number)?.toInt()
-                    if (fd != null) service.protect(fd)
-                    null
-                }
-                "openTun" -> openTun(args?.firstOrNull() ?: error("缺少 TUN 参数"))
-                "getInterfaces" -> getInterfaces()
-                "findConnectionOwner" -> findConnectionOwner(args)
-                "startDefaultInterfaceMonitor" -> startNetworkMonitor(args?.firstOrNull())
-                "closeDefaultInterfaceMonitor" -> stopNetworkMonitor()
-                "underNetworkExtension", "includeAllNetworks",
-                "usePlatformShell", "usePlatformBridge", "usePlatformAutoRedirect" -> false
-                "clearDNSCache", "startNeighborMonitor", "closeNeighborMonitor",
-                "registerMyInterface" -> null
-                "tailscaleHostname" -> "SwiftProxy"
-                "lookupSFTPServer" -> ""
-                "readSystemSSHHostKey" -> ""
-                else -> defaultValue(method.returnType)
-            }
-        }
-
-        val serverClass = Class.forName("io.nekohasekai.libbox.CommandServer", true, loader)
-        val constructor = serverClass.constructors.firstOrNull { it.parameterCount == 2 }
-            ?: error("当前 libbox 缺少 CommandServer(handler, platform) 构造函数")
-        val server = constructor.newInstance(handlerProxy, platformProxy)
-        server.javaClass.getMethod("start").invoke(server)
-        commandServer = server
-        val overrideClass = Class.forName("io.nekohasekai.libbox.OverrideOptions", true, loader)
-        val overrideOptions = overrideClass.getDeclaredConstructor().newInstance()
-        server.javaClass.getMethod("startOrReloadService", String::class.java, overrideClass)
-            .invoke(server, config, overrideOptions)
-        Log.i(TAG, "sing-box service started")
-    }
-
-    private fun validateConfig(config: String) {
-        val libbox = Class.forName("io.nekohasekai.libbox.Libbox", true, service.classLoader)
-        val validator = libbox.methods.firstOrNull { it.name == "checkConfig" && it.parameterCount == 1 }
-            ?: error("当前 libbox 不支持配置校验")
+        val platformInterface = SwiftProxyPlatformInterface(service)
+        val server = CommandServer(this, platformInterface)
         try {
-            validator.invoke(null, config)
-        } catch (error: java.lang.reflect.InvocationTargetException) {
-            throw error.targetException ?: error
+            server.start()
+            commandServer = server
+            platform = platformInterface
+            activeConfig = config
+            server.startOrReloadService(config, OverrideOptions())
+            Log.i(TAG, "sing-box service started")
+        } catch (error: Throwable) {
+            runCatching { server.closeService() }
+            runCatching { server.close() }
+            platformInterface.closeTun()
+            commandServer = null
+            platform = null
+            activeConfig = null
+            throw error
         }
-    }
-
-    private fun setupLibbox() {
-        if (setupCompleted) return
-        synchronized(SingBoxEngine::class.java) {
-            if (setupCompleted) return
-            setupLibboxOnce()
-            setupCompleted = true
-        }
-    }
-
-    private fun setupLibboxOnce() {
-        val loader = service.classLoader
-        val libbox = Class.forName("io.nekohasekai.libbox.Libbox", true, loader)
-        val setupClass = Class.forName("io.nekohasekai.libbox.SetupOptions", true, loader)
-        val options = setupClass.getDeclaredConstructor().newInstance()
-        val workDir = service.getExternalFilesDir(null) ?: service.filesDir
-        setProperty(options, "basePath", service.filesDir.absolutePath)
-        setProperty(options, "workingPath", workDir.absolutePath)
-        setProperty(options, "tempPath", service.cacheDir.absolutePath)
-        setProperty(options, "fixAndroidStack", true)
-        setProperty(options, "logMaxLines", 3000)
-        setProperty(options, "debug", false)
-        setProperty(options, "appVersion", "5")
-        setProperty(options, "appMarketingVersion", "0.6.0")
-        val setup = libbox.methods.firstOrNull { it.name == "setup" && it.parameterCount == 1 }
-            ?: error("libbox.setup API 不存在")
-        setup.invoke(null, options)
-    }
-
-    private fun setProperty(target: Any, name: String, value: Any) {
-        val setter = target.javaClass.methods.firstOrNull {
-            it.name.equals("set" + name.replaceFirstChar(Char::uppercase), true) &&
-                it.parameterCount == 1 && boxed(it.parameterTypes[0]).isAssignableFrom(boxed(value.javaClass))
-        } ?: target.javaClass.methods.firstOrNull {
-            it.name.equals("set" + name.replaceFirstChar(Char::uppercase), true) && it.parameterCount == 1
-        }
-        setter?.invoke(target, value)
-    }
-
-    private fun openTun(options: Any): Int {
-        val builder = service.Builder().setSession("SwiftProxy")
-        val mtu = call(options, "getMtu", "mtu") as? Number
-        if (mtu != null && mtu.toInt() in 576..9000) builder.setMtu(mtu.toInt())
-
-        addAddressIterator(builder, call(options, "getInet4Address", "inet4Address"))
-        addAddressIterator(builder, call(options, "getInet6Address", "inet6Address"))
-
-        val autoRoute = call(options, "getAutoRoute", "autoRoute") as? Boolean ?: true
-        if (autoRoute) {
-            var routeCount = addRouteIterator(builder, call(options, "getInet4RouteAddress", "inet4RouteAddress"))
-            routeCount += addRouteIterator(builder, call(options, "getInet6RouteAddress", "inet6RouteAddress"))
-            if (routeCount == 0) {
-                builder.addRoute("0.0.0.0", 0)
-                builder.addRoute("::", 0)
-            }
-            addExcludedRouteIterator(builder, call(options, "getInet4RouteExcludeAddress", "inet4RouteExcludeAddress"))
-            addExcludedRouteIterator(builder, call(options, "getInet6RouteExcludeAddress", "inet6RouteExcludeAddress"))
-            addStringIterator(builder, call(options, "getDnsServerAddress", "dnsServerAddress"))
-        }
-
-        val established = builder.establish() ?: error("Android 未能建立 VPN TUN 接口")
-        tunDescriptor?.close()
-        tunDescriptor = established
-        return established.fd
-    }
-
-    private fun getInterfaces(): Any {
-        val loader = service.classLoader
-        val itemClass = Class.forName("io.nekohasekai.libbox.NetworkInterface", true, loader)
-        val iteratorClass = Class.forName("io.nekohasekai.libbox.NetworkInterfaceIterator", true, loader)
-        val stringIteratorClass = Class.forName("io.nekohasekai.libbox.StringIterator", true, loader)
-        val connectivity = service.getSystemService(ConnectivityManager::class.java)
-        val networkInterfaces = NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
-        val items = networkInterfaces.mapNotNull { networkInterface ->
-            runCatching {
-                val item = itemClass.getDeclaredConstructor().newInstance()
-                setProperty(item, "name", networkInterface.name)
-                setProperty(item, "index", networkInterface.index)
-                setProperty(item, "mtu", runCatching { networkInterface.mtu }.getOrDefault(1500))
-                val addresses = networkInterface.interfaceAddresses.map { it.address.hostAddress + "/" + it.networkPrefixLength }
-                setProperty(item, "addresses", stringIterator(stringIteratorClass, addresses))
-                var flags = 0
-                if (networkInterface.isUp) flags = flags or OsConstants.IFF_UP or OsConstants.IFF_RUNNING
-                if (networkInterface.isLoopback) flags = flags or OsConstants.IFF_LOOPBACK
-                if (networkInterface.isPointToPoint) flags = flags or OsConstants.IFF_POINTOPOINT
-                if (networkInterface.supportsMulticast()) flags = flags or OsConstants.IFF_MULTICAST
-                setProperty(item, "flags", flags)
-                val activeNetwork = connectivity.activeNetwork
-                val capabilities = activeNetwork?.let { connectivity.getNetworkCapabilities(it) }
-                val linkProperties = activeNetwork?.let { connectivity.getLinkProperties(it) }
-                val typeField = when {
-                    capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true -> "InterfaceTypeWIFI"
-                    capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true -> "InterfaceTypeCellular"
-                    capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true -> "InterfaceTypeEthernet"
-                    else -> "InterfaceTypeOther"
-                }
-                val libbox = Class.forName("io.nekohasekai.libbox.Libbox", true, loader)
-                val type = runCatching { libbox.getField(typeField).get(null) }.getOrNull()
-                if (type != null) setProperty(item, "type", type)
-                setProperty(item, "dnsServer", stringIterator(stringIteratorClass, linkProperties?.dnsServers?.mapNotNull { it.hostAddress }.orEmpty()))
-                setProperty(item, "gateway", stringIterator(stringIteratorClass, linkProperties?.routes?.filter { it.destination.prefixLength == 0 }?.mapNotNull { it.gateway?.hostAddress }.orEmpty()))
-                setProperty(item, "metered", capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) != true)
-                item
-            }.getOrNull()
-        }
-        var index = 0
-        return Proxy.newProxyInstance(loader, arrayOf(iteratorClass)) { _, method, _ ->
-            when (method.name) {
-                "hasNext" -> index < items.size
-                "next" -> if (index < items.size) items[index++] else null
-                else -> defaultValue(method.returnType)
-            }
-        }
-    }
-
-    private fun stringIterator(iteratorClass: Class<*>, values: List<String>): Any {
-        var index = 0
-        return Proxy.newProxyInstance(service.classLoader, arrayOf(iteratorClass)) { _, method, _ ->
-            when (method.name) {
-                "hasNext" -> index < values.size
-                "next" -> if (index < values.size) values[index++] else ""
-                else -> defaultValue(method.returnType)
-            }
-        }
-    }
-
-    private fun findConnectionOwner(args: Array<out Any?>?): Any {
-        require(args != null && args.size >= 5) { "连接归属参数不完整" }
-        val uid = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-            val connectivity = service.getSystemService(ConnectivityManager::class.java)
-            connectivity.getConnectionOwnerUid(
-                (args[0] as Number).toInt(),
-                InetSocketAddress(args[1].toString(), (args[2] as Number).toInt()),
-                InetSocketAddress(args[3].toString(), (args[4] as Number).toInt())
-            )
-        } else {
-            val libbox = Class.forName("io.nekohasekai.libbox.Libbox", true, service.classLoader)
-            val method = libbox.methods.first { it.name == "findConnectionOwner" && it.parameterCount == 5 }
-            return method.invoke(null, *args) ?: error("无法确定连接所属应用")
-        }
-        check(uid != Process.INVALID_UID) { "无法确定连接所属应用" }
-        val packages = service.packageManager.getPackagesForUid(uid)?.toList().orEmpty()
-        val ownerClass = Class.forName("io.nekohasekai.libbox.ConnectionOwner", true, service.classLoader)
-        val owner = ownerClass.getDeclaredConstructor().newInstance()
-        setProperty(owner, "userId", uid)
-        setProperty(owner, "userName", packages.firstOrNull().orEmpty())
-        val iteratorClass = Class.forName("io.nekohasekai.libbox.StringIterator", true, service.classLoader)
-        setProperty(owner, "androidPackageNames", stringIterator(iteratorClass, packages))
-        return owner
-    }
-
-    private fun startNetworkMonitor(listener: Any?) {
-        if (listener == null) return
-        interfaceListener = listener
-        if (networkCallback != null) return
-        val connectivity = service.getSystemService(ConnectivityManager::class.java)
-        val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) = updateDefaultInterface(network)
-            override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) = updateDefaultInterface(network)
-            override fun onLost(network: Network) {
-                updateListener("", -1)
-                val active = connectivity.activeNetwork
-                if (active != null && active != network) updateDefaultInterface(active)
-            }
-        }
-        networkCallback = callback
-        runCatching {
-            connectivity.registerDefaultNetworkCallback(callback)
-            connectivity.activeNetwork?.let { updateDefaultInterface(it) }
-        }.onFailure { Log.w(TAG, "Unable to monitor default network", it) }
-    }
-
-    private fun updateDefaultInterface(network: Network) {
-        val connectivity = service.getSystemService(ConnectivityManager::class.java)
-        val link = connectivity.getLinkProperties(network) ?: return updateListener("", -1)
-        val name = link.interfaceName ?: return updateListener("", -1)
-        val index = runCatching { NetworkInterface.getByName(name)?.index ?: -1 }.getOrDefault(-1)
-        updateListener(name, index)
-    }
-
-    private fun updateListener(name: String, index: Int) {
-        val listener = interfaceListener ?: return
-        runCatching {
-            listener.javaClass.getMethod("updateDefaultInterface", String::class.java,
-                Int::class.javaPrimitiveType, Boolean::class.javaPrimitiveType, Boolean::class.javaPrimitiveType)
-                .invoke(listener, name, index, false, false)
-        }.onFailure { Log.w(TAG, "Default interface update callback failed", it) }
-    }
-
-    private fun stopNetworkMonitor() {
-        val callback = networkCallback ?: return
-        runCatching { service.getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(callback) }
-        networkCallback = null
-        interfaceListener = null
-    }
-    private fun addAddressIterator(builder: VpnService.Builder, iterator: Any?) {
-        forEachIterator(iterator) { address ->
-            val ip = call(address, "address")?.toString().orEmpty()
-            val prefix = (call(address, "prefix") as? Number)?.toInt() ?: 0
-            if (ip.isNotBlank()) builder.addAddress(ip, prefix)
-        }
-    }
-
-    private fun addRouteIterator(builder: VpnService.Builder, iterator: Any?): Int {
-        var count = 0
-        forEachIterator(iterator) { address ->
-            val route = parseRoute(address) ?: return@forEachIterator
-            builder.addRoute(route.first, route.second)
-            count++
-        }
-        return count
-    }
-
-    private fun parseRoute(value: Any): Pair<String, Int>? {
-        if (value is String) {
-            val separator = value.lastIndexOf('/')
-            if (separator <= 0) return null
-            val prefix = value.substring(separator + 1).toIntOrNull() ?: return null
-            return value.substring(0, separator) to prefix
-        }
-        val ip = call(value, "address")?.toString().orEmpty()
-        val prefix = (call(value, "prefix") as? Number)?.toInt() ?: return null
-        return if (ip.isNotBlank()) ip to prefix else null
-    }
-
-    private fun addExcludedRouteIterator(builder: VpnService.Builder, iterator: Any?) {
-        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) return
-        forEachIterator(iterator) { value ->
-            val route = parseRoute(value) ?: return@forEachIterator
-            runCatching { builder.excludeRoute(android.net.IpPrefix(InetAddress.getByName(route.first), route.second)) }
-                .onFailure { Log.w(TAG, "Unable to exclude VPN route: $value", it) }
-        }
-    }
-    private fun addStringIterator(builder: VpnService.Builder, iterator: Any?) {
-        forEachIterator(iterator) { value ->
-            value.toString().takeIf { it.isNotBlank() }?.let { runCatching { builder.addDnsServer(it) } }
-        }
-    }
-
-    private fun forEachIterator(iterator: Any?, action: (Any) -> Unit) {
-        if (iterator == null) return
-        val hasNext = iterator.javaClass.methods.firstOrNull { it.name == "hasNext" && it.parameterCount == 0 } ?: return
-        val next = iterator.javaClass.methods.firstOrNull { it.name == "next" && it.parameterCount == 0 } ?: return
-        var guard = 0
-        while ((hasNext.invoke(iterator) as? Boolean == true) && guard++ < 256) {
-            val value = next.invoke(iterator) ?: continue
-            action(value)
-        }
-    }
-
-    private fun call(target: Any, vararg names: String): Any? {
-        for (name in names) {
-            val method = target.javaClass.methods.firstOrNull { it.name == name && it.parameterCount == 0 }
-            if (method != null) return method.invoke(target)
-        }
-        return null
     }
 
     fun stop() {
@@ -364,42 +84,54 @@ internal class SingBoxEngine(
         stopping = true
         val server = commandServer
         commandServer = null
+        activeConfig = null
         if (server != null) {
-            runCatching { server.javaClass.getMethod("closeService").invoke(server) }
+            runCatching { server.closeService() }
                 .onFailure { Log.w(TAG, "closeService failed", it) }
-            runCatching { server.javaClass.getMethod("close").invoke(server) }
+            runCatching { server.close() }
                 .onFailure { Log.w(TAG, "close failed", it) }
         }
-        runCatching { tunDescriptor?.close() }
-        tunDescriptor = null
-        stopNetworkMonitor()
-        handlerProxy = null
-        platformProxy = null
+        platform?.closeTun()
+        platform = null
         onStopped()
     }
 
-    private fun defaultValue(type: Class<*>): Any? = when (type) {
-        java.lang.Boolean.TYPE -> false
-        java.lang.Integer.TYPE -> 0
-        java.lang.Long.TYPE -> 0L
-        java.lang.Float.TYPE -> 0f
-        java.lang.Double.TYPE -> 0.0
-        java.lang.Short.TYPE -> 0.toShort()
-        java.lang.Byte.TYPE -> 0.toByte()
-        java.lang.Character.TYPE -> 0.toChar()
-        java.lang.Void.TYPE -> null
-        else -> null
+    override fun serviceStop() {
+        stop()
     }
 
-    private fun boxed(type: Class<*>): Class<*> = when (type) {
-        java.lang.Boolean.TYPE -> java.lang.Boolean::class.java
-        java.lang.Integer.TYPE -> java.lang.Integer::class.java
-        java.lang.Long.TYPE -> java.lang.Long::class.java
-        java.lang.Float.TYPE -> java.lang.Float::class.java
-        java.lang.Double.TYPE -> java.lang.Double::class.java
-        java.lang.Short.TYPE -> java.lang.Short::class.java
-        java.lang.Byte.TYPE -> java.lang.Byte::class.java
-        java.lang.Character.TYPE -> java.lang.Character::class.java
-        else -> type
+    override fun serviceReload() {
+        val server = commandServer ?: return
+        val config = activeConfig ?: return
+        if (stopping) return
+        runCatching { server.startOrReloadService(config, OverrideOptions()) }
+            .onFailure { Log.e(TAG, "sing-box reload failed", it) }
     }
+
+    override fun getSystemProxyStatus(): SystemProxyStatus? = null
+
+    override fun setSystemProxyEnabled(isEnabled: Boolean) {
+        // Android's VPN tunnel is the only proxy mode exposed by this app.
+    }
+
+    override fun sendNotification(notification: Notification) {
+        Log.i(TAG, "sing-box notification: ${notification.title}")
+    }
+
+    override fun cancelNotification(identifier: String, typeID: Int) {
+        Log.d(TAG, "sing-box notification dismissed: $identifier ($typeID)")
+    }
+
+    override fun triggerNativeCrash() {
+        Thread {
+            Thread.sleep(200)
+            throw RuntimeException("sing-box requested native crash")
+        }.start()
+    }
+
+    override fun writeDebugMessage(message: String?) {
+        Log.d(TAG, message.orEmpty())
+    }
+
+    override fun connectSSHAgent(): Int = -1
 }
