@@ -28,7 +28,13 @@ class SwiftProxyVpnService : VpnService() {
         fun protectSocket(socket: java.net.Socket): Boolean =
             activeService?.protect(socket) ?: true
 
+        fun isRunning(): Boolean = activeService != null
+
         fun publishState(service: VpnService, state: String, message: String? = null) {
+            service.getSharedPreferences("swiftproxy", MODE_PRIVATE).edit()
+                .putString("vpn_state", state)
+                .putString("vpn_message", message.orEmpty())
+                .apply()
             service.sendBroadcast(
                 Intent(ACTION_STATE).setPackage(service.packageName)
                     .putExtra("state", state)
