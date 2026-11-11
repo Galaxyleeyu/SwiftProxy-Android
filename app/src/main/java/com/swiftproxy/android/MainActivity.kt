@@ -439,12 +439,20 @@ private fun SwiftProxyHome(
                     fetchSubscription(subscriptionInput.trim()) { result ->
                         importing = false
                         result.onSuccess { imported ->
-                            val existing = nodes.map { it.rawUri }.toSet()
-                            val fresh = imported.filter { it.rawUri !in existing }
-                            nodes.addAll(fresh)
+                            val prefs = context.getSharedPreferences("swiftproxy", Context.MODE_PRIVATE)
+                            val previousSubscriptionNodes = prefs.getStringSet("subscription_nodes", emptySet()).orEmpty().toSet()
+                            val mergedUris = nodes.map { it.rawUri }.toMutableSet()
+                            mergedUris.removeAll(previousSubscriptionNodes)
+                            val importedUris = imported.map { it.rawUri }.toSet()
+                            mergedUris.addAll(importedUris)
+                            nodes.clear()
+                            nodes.addAll(mergedUris.mapNotNull(NodeParser::parseUri))
                             selectedId = nodes.firstOrNull()?.id.orEmpty()
                             persist()
-                            status = "订阅解析完成：识别 ${imported.size} 个节点，新增 ${fresh.size} 个"
+                            prefs.edit().putStringSet("subscription_nodes", importedUris).apply()
+                            SecureStore.saveSubscriptionUrl(context, subscriptionInput.trim())
+                            SubscriptionUpdateWorker.schedule(context)
+                            status = "订阅导入完成：${imported.size} 个节点；已开启每 12 小时自动更新"
                             subscriptionInput = ""
                             showSubscriptionDialog = false
                         }.onFailure { error ->
