@@ -98,7 +98,13 @@ internal class SwiftProxyPlatformInterface(
     override fun openTun(options: TunOptions): Int {
         check(VpnService.prepare(vpn) == null) { "缺少 Android VPN 授权" }
         val builder = vpn.Builder().setSession("SwiftProxy").setMtu(options.mtu)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) builder.setMetered(false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val metered = resolveUnderlyingNetwork()?.let { network ->
+                connectivity.getNetworkCapabilities(network)
+                    ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) != true
+            } ?: true
+            builder.setMetered(metered)
+        }
 
         val inet4Address = options.inet4Address
         while (inet4Address.hasNext()) {
