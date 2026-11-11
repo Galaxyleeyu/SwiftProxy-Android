@@ -53,7 +53,7 @@ internal class SwiftProxyPlatformInterface(
         override fun raw(): Boolean = false
 
         override fun lookup(ctx: ExchangeContext, network: String, domain: String) {
-            val active = defaultNetwork ?: error("尚未获取底层网络")
+            val active = resolveUnderlyingNetwork() ?: error("尚未获取底层网络")
             try {
                 val addresses = active.getAllByName(domain).filter { address ->
                     when {
@@ -263,6 +263,23 @@ internal class SwiftProxyPlatformInterface(
         networkCallback?.let { runCatching { connectivity.unregisterNetworkCallback(it) } }
         networkCallback = null
         defaultNetwork = null
+    }
+
+    private fun resolveUnderlyingNetwork(): Network? {
+        defaultNetwork?.let { return it }
+        val networks = connectivity.allNetworks.toList()
+        return networks.firstOrNull { network ->
+            val capabilities = connectivity.getNetworkCapabilities(network)
+            capabilities != null &&
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) &&
+                !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+        } ?: networks.firstOrNull { network ->
+            val capabilities = connectivity.getNetworkCapabilities(network)
+            capabilities != null &&
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+        }
     }
 
     private fun updateDefaultInterface(listener: InterfaceUpdateListener, network: Network) {
