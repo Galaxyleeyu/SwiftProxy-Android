@@ -16,6 +16,7 @@ object NodeLatencyTester {
             val result = runCatching {
                 val started = SystemClock.elapsedRealtime()
                 Socket().use { socket ->
+                    check(SwiftProxyVpnService.protectSocket(socket)) { "无法绕过 VPN 测速" }
                     socket.connect(InetSocketAddress(node.server, node.port), 4000)
                 }
                 "${SystemClock.elapsedRealtime() - started} ms"
