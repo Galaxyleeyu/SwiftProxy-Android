@@ -45,11 +45,13 @@ class SwiftProxyVpnService : VpnService() {
 
     private var engine: SingBoxEngine? = null
     private val statsHandler = Handler(Looper.getMainLooper())
+    private var rxBaseline = 0L
+    private var txBaseline = 0L
     private val statsTask = object : Runnable {
         override fun run() {
             if (engine != null) {
-                val rx = TrafficStats.getUidRxBytes(Process.myUid()).coerceAtLeast(0L)
-                val tx = TrafficStats.getUidTxBytes(Process.myUid()).coerceAtLeast(0L)
+                val rx = (TrafficStats.getUidRxBytes(Process.myUid()).coerceAtLeast(0L) - rxBaseline).coerceAtLeast(0L)
+                val tx = (TrafficStats.getUidTxBytes(Process.myUid()).coerceAtLeast(0L) - txBaseline).coerceAtLeast(0L)
                 sendBroadcast(Intent(ACTION_STATS).setPackage(packageName)
                     .putExtra("rx", rx).putExtra("tx", tx))
                 statsHandler.postDelayed(this, 1000L)
@@ -59,6 +61,8 @@ class SwiftProxyVpnService : VpnService() {
 
     private fun startTrafficMonitor() {
         statsHandler.removeCallbacks(statsTask)
+        rxBaseline = TrafficStats.getUidRxBytes(Process.myUid()).coerceAtLeast(0L)
+        txBaseline = TrafficStats.getUidTxBytes(Process.myUid()).coerceAtLeast(0L)
         statsHandler.post(statsTask)
     }
 
