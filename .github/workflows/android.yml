@@ -47,7 +47,7 @@ jobs:
           profile: pixel_2
           cores: 4
           emulator-boot-timeout: 900
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -no-metrics
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -no-metrics -partition-size 4096 -wipe-data
           disable-animations: true
           script: gradle connectedDebugAndroidTest
 
