@@ -43,6 +43,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
@@ -124,6 +125,7 @@ private fun SwiftProxyHome(
 ) {
     val context = LocalContext.current
     val nodes = remember { mutableStateListOf<ProxyNode>() }
+    val latencyResults = remember { mutableStateMapOf<String, String>() }
     var showAddDialog by remember { mutableStateOf(false) }
     var showSubscriptionDialog by remember { mutableStateOf(false) }
     var manualInput by remember { mutableStateOf("") }
@@ -365,13 +367,21 @@ private fun SwiftProxyHome(
                                 Column(Modifier.weight(1f)) {
                                     Text(node.name, color = Color.White, fontWeight = FontWeight.SemiBold)
                                     Spacer(Modifier.height(4.dp))
-                                    Text("${node.type}  ·  ${node.server.ifBlank { "服务器地址待解析" }}", color = Muted, fontSize = 11.sp)
+                                    Text("${node.type}  ·  ${node.server}:${node.port}", color = Muted, fontSize = 11.sp)
+                                    Text("TCP 延迟：${latencyResults[node.id] ?: "未测速"}", color = Muted, fontSize = 10.sp)
                                 }
-                                TextButton(onClick = {
+                                Column(horizontalAlignment = Alignment.End) {
+                                    TextButton(onClick = {
+                                        latencyResults[node.id] = "测速中…"
+                                        NodeLatencyTester.test(node) { result -> latencyResults[node.id] = result }
+                                    }) { Text("测速") }
+                                    TextButton(onClick = {
                                     nodes.remove(node)
                                     if (selectedId == node.id) selectedId = nodes.firstOrNull()?.id.orEmpty()
                                     persist()
+                                    latencyResults.remove(node.id)
                                 }) { Text("删除", color = Color(0xFFFF8A8A)) }
+                                }
                             }
                         }
                     }
