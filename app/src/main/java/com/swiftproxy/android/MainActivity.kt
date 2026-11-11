@@ -69,7 +69,7 @@ private fun SwiftProxyHome() {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("SwiftProxy", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold)
-                Text("0.1.0", color = Muted, fontSize = 12.sp)
+                Text("0.3.0", color = Muted, fontSize = 12.sp)
             }
 
             Spacer(Modifier.height(42.dp))
@@ -86,7 +86,7 @@ private fun SwiftProxyHome() {
             Spacer(Modifier.height(18.dp))
             Text("Not connected", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(6.dp))
-            Text("Proxy core is not installed yet", color = Muted, fontSize = 13.sp)
+            Text("Core integration in progress", color = Muted, fontSize = 13.sp)
 
             Spacer(Modifier.height(32.dp))
 
@@ -101,7 +101,7 @@ private fun SwiftProxyHome() {
                     Text("No subscription imported", color = Color.White, fontSize = 16.sp)
                     Spacer(Modifier.height(14.dp))
                     Text(
-                        "Import your HTTPS subscription in a future build.",
+                        "HTTPS subscription and QR import are not available yet.",
                         color = Muted,
                         fontSize = 12.sp
                     )
@@ -125,7 +125,7 @@ private fun SwiftProxyHome() {
 
             Spacer(Modifier.weight(1f))
             Text(
-                "基础界面预览 · 尚未集成代理内核",
+                "SwiftProxy · Android client",
                 color = Muted,
                 fontSize = 11.sp
             )
