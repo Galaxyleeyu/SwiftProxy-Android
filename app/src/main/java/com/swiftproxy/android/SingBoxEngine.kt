@@ -25,6 +25,7 @@ internal class SingBoxEngine(
     companion object { private const val TAG = "SwiftProxyCore" }
 
     private var commandServer: Any? = null
+    private var stopping = false
     private var handlerProxy: Any? = null
     private var platformProxy: Any? = null
     private var tunDescriptor: android.os.ParcelFileDescriptor? = null
@@ -33,6 +34,7 @@ internal class SingBoxEngine(
 
     fun start(config: String) {
         check(commandServer == null) { "代理核心已经启动" }
+        stopping = false
         setupLibbox()
         val loader = service.classLoader
         val handlerClass = Class.forName("io.nekohasekai.libbox.CommandServerHandler", true, loader)
@@ -314,6 +316,8 @@ internal class SingBoxEngine(
     }
 
     fun stop() {
+        if (stopping) return
+        stopping = true
         val server = commandServer
         commandServer = null
         if (server != null) {
