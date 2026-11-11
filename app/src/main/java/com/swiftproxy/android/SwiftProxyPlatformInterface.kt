@@ -234,7 +234,7 @@ internal class SwiftProxyPlatformInterface(
                 )
                 gateway = StringArray(
                     link.routes.filter { it.destination.prefixLength == 0 }
-                        .mapNotNull { it.gateway?.takeUnless(InetAddress::isAnyLocalAddress)?.hostAddress }
+                        .mapNotNull { it.gateway?.takeUnless { gateway -> gateway.isAnyLocalAddress }?.hostAddress }
                         .iterator()
                 )
                 type = when {
@@ -303,6 +303,12 @@ internal class SwiftProxyPlatformInterface(
         tunDescriptor = null
         networkCallback?.let { runCatching { connectivity.unregisterNetworkCallback(it) } }
         networkCallback = null
+    }
+
+    private fun StringIterator.toList(): List<String> {
+        val values = mutableListOf<String>()
+        while (hasNext()) values.add(next())
+        return values
     }
 
     private fun java.net.InterfaceAddress.toPrefix(): String {
