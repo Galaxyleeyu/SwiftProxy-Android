@@ -65,7 +65,7 @@ internal class SwiftProxyPlatformInterface(
                 if (addresses.isEmpty()) {
                     ctx.errorCode(3)
                 } else {
-                    ctx.success(addresses.joinToString("\\n") { it.hostAddress.orEmpty() })
+                    ctx.success(addresses.joinToString(System.lineSeparator()) { it.hostAddress.orEmpty() })
                 }
             } catch (_: java.net.UnknownHostException) {
                 ctx.errorCode(3)
