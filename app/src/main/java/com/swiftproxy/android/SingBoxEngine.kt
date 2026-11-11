@@ -23,7 +23,10 @@ internal class SingBoxEngine(
     private val service: VpnService,
     private val onStopped: () -> Unit
 ) {
-    companion object { private const val TAG = "SwiftProxyCore" }
+    companion object {
+        private const val TAG = "SwiftProxyCore"
+        @Volatile private var setupCompleted = false
+    }
 
     private var commandServer: Any? = null
     private var stopping = false
@@ -100,6 +103,15 @@ internal class SingBoxEngine(
     }
 
     private fun setupLibbox() {
+        if (setupCompleted) return
+        synchronized(SingBoxEngine::class.java) {
+            if (setupCompleted) return
+            setupLibboxOnce()
+            setupCompleted = true
+        }
+    }
+
+    private fun setupLibboxOnce() {
         val loader = service.classLoader
         val libbox = Class.forName("io.nekohasekai.libbox.Libbox", true, loader)
         val setupClass = Class.forName("io.nekohasekai.libbox.SetupOptions", true, loader)
