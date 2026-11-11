@@ -134,6 +134,7 @@ private fun SwiftProxyHome(
     fetchSubscription: (String, (Result<List<ProxyNode>>) -> Unit) -> Unit
 ) {
     val context = LocalContext.current
+    val preferences = remember(context) { context.getSharedPreferences("swiftproxy", Context.MODE_PRIVATE) }
     val nodes = remember { mutableStateListOf<ProxyNode>() }
     val latencyResults = remember { mutableStateMapOf<String, String>() }
     var showAddDialog by remember { mutableStateOf(false) }
@@ -146,8 +147,12 @@ private fun SwiftProxyHome(
     var connectionState by remember { mutableStateOf("disconnected") }
     var rxBytes by remember { mutableStateOf(0L) }
     var txBytes by remember { mutableStateOf(0L) }
-    var autoSwitch by remember { mutableStateOf(true) }
+    var autoSwitch by remember { mutableStateOf(preferences.getBoolean("auto_switch", true)) }
     var pendingConfig by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(autoSwitch) {
+        preferences.edit().putBoolean("auto_switch", autoSwitch).apply()
+    }
 
     val vpnPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
