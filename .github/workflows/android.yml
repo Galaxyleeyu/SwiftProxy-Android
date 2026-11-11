@@ -40,7 +40,7 @@ jobs:
           api-level: 35
           arch: x86_64
           target: google_apis
-          profile: Pixel 6
+          profile: Nexus 6
           disable-animations: true
           script: gradle connectedDebugAndroidTest
 
