@@ -18,6 +18,8 @@ class LibboxConfigInstrumentedTest {
     fun generatedConfigsPassNativeLibboxValidation() {
         val uuid = "00000000-0000-0000-0000-000000000000"
         val vless = "vless://$uuid@example.com:443?security=tls&sni=example.com#vless"
+        val vlessWs = "vless://$uuid@example.com:443?type=ws&host=cdn.example.com&path=%2Fws&security=tls&sni=example.com#vless-ws"
+        val vlessReality = "vless://$uuid@example.com:443?type=grpc&serviceName=grpc-service&security=reality&sni=example.com&fp=chrome&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&sid=0123456789abcdef#vless-reality"
         val trojan = "trojan://test-password@example.com:443?security=tls&sni=example.com#trojan"
         val vmessJson = """{"v":"2","ps":"vmess","add":"example.com","port":"443","id":"$uuid","aid":"0","scy":"auto","net":"ws","type":"none","host":"example.com","path":"/ws","tls":"tls","sni":"example.com"}"""
         val vmessPayload = Base64.encodeToString(vmessJson.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
@@ -34,7 +36,7 @@ class LibboxConfigInstrumentedTest {
         assertNotNull(parsedShadowsocks)
         assertEquals(8388, parsedShadowsocks?.port)
 
-        listOf(vless, vmess, vmessUpgrade, shadowsocks, trojan).forEach { shareLink ->
+        listOf(vless, vlessWs, vlessReality, vmess, vmessUpgrade, shadowsocks, trojan).forEach { shareLink ->
             val config = SingBoxConfigBuilder.build(shareLink)
             checkNativeConfig(config)
             if (shareLink == vmessUpgrade) {
