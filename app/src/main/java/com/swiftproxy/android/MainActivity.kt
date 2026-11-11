@@ -35,6 +35,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
@@ -131,6 +132,7 @@ private fun SwiftProxyHome(
     var importing by remember { mutableStateOf(false) }
     var selectedId by remember { mutableStateOf("") }
     var connectionState by remember { mutableStateOf("disconnected") }
+    var autoSwitch by remember { mutableStateOf(true) }
     var pendingConfig by remember { mutableStateOf<String?>(null) }
 
     val vpnPermissionLauncher = rememberLauncherForActivityResult(
@@ -200,7 +202,7 @@ private fun SwiftProxyHome(
             status = "请先选择一个节点"
             return
         }
-        val config = runCatching { SingBoxConfigBuilder.build(node.rawUri) }.getOrElse {
+        val config = runCatching { SingBoxConfigBuilder.buildForNodes(nodes.map { it.rawUri }, node.rawUri, autoSwitch) }.getOrElse {
             status = "节点配置生成失败：${it.message ?: "请检查分享链接"}"
             return
         }
@@ -287,6 +289,18 @@ private fun SwiftProxyHome(
             ) {
                 Text("节点列表  ·  ${nodes.size}", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
                 TextButton(onClick = { showAddDialog = true }) { Text("+ 添加节点") }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text("自动选择低延迟节点", color = Color.White, fontSize = 13.sp)
+                    Text("多个节点时由 sing-box 定期测速并切换", color = Muted, fontSize = 10.sp)
+                }
+                Switch(checked = autoSwitch, onCheckedChange = { autoSwitch = it })
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
