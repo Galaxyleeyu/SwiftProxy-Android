@@ -162,7 +162,7 @@ object NodeParser {
     }
 
     private fun decodeFragment(value: String): String =
-        URLDecoder.decode(value, StandardCharsets.UTF_8.name())
+        URLDecoder.decode(value.replace("+", "%2B"), StandardCharsets.UTF_8.name())
 
     private fun decodeBase64(value: String): String? {
         val normalized = value.trim().replace('-', '+').replace('_', '/')
