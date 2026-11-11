@@ -70,11 +70,11 @@ internal class SingBoxEngine(
             ?: error("当前 libbox 缺少 CommandServer(handler, platform) 构造函数")
         val server = constructor.newInstance(handlerProxy, platformProxy)
         server.javaClass.getMethod("start").invoke(server)
+        commandServer = server
         val overrideClass = Class.forName("io.nekohasekai.libbox.OverrideOptions", true, loader)
         val overrideOptions = overrideClass.getDeclaredConstructor().newInstance()
         server.javaClass.getMethod("startOrReloadService", String::class.java, overrideClass)
             .invoke(server, config, overrideOptions)
-        commandServer = server
         Log.i(TAG, "sing-box service started")
     }
 
