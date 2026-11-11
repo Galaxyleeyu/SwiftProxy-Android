@@ -34,6 +34,16 @@ jobs:
       - name: Run unit tests
         run: gradle testDebugUnitTest
 
+      - name: Run libbox emulator tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: Pixel 6
+          disable-animations: true
+          script: gradle connectedDebugAndroidTest
+
       - name: Build debug APK
         run: gradle assembleDebug
 
