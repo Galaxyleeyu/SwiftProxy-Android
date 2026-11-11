@@ -150,7 +150,7 @@ object SingBoxConfigBuilder {
     }
 
     private fun baseOutbound(type: String, uri: URI): JSONObject {
-        val server = uri.host?.takeIf { it.isNotBlank() } ?: error("$type 服务器地址无效")
+        val server = uri.host?.takeIf { it.isNotBlank() }?.removePrefix("[")?.removeSuffix("]") ?: error("$type 服务器地址无效")
         val port = uri.port
         require(port in 1..65535) { "$type 端口无效" }
         return JSONObject()
