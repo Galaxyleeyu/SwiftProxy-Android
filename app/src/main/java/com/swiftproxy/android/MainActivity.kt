@@ -1,5 +1,6 @@
 package com.swiftproxy.android
 
+import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -137,7 +138,7 @@ private fun SwiftProxyHome(
     ) { result ->
         val config = pendingConfig
         pendingConfig = null
-        if (result.resultCode == ComponentActivity.RESULT_OK && config != null) {
+        if (result.resultCode == Activity.RESULT_OK && config != null) {
             startVpnService(context, config)
         } else {
             status = "未获得系统 VPN 授权"
