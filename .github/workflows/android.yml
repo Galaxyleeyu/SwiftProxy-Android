@@ -31,6 +31,9 @@ jobs:
           mkdir -p app/src/main/res/drawable-nodpi
           base64 --decode build-assets/swiftproxy_icon.jpg.b64 > app/src/main/res/drawable-nodpi/swiftproxy_icon.jpg
 
+      - name: Run unit tests
+        run: gradle testDebugUnitTest
+
       - name: Build debug APK
         run: gradle assembleDebug
 
