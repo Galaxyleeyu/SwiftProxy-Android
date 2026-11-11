@@ -145,6 +145,29 @@ private fun SwiftProxyHome(
         }
     }
 
+    val qrScannerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val value = result.data?.getStringExtra(QrScannerActivity.EXTRA_QR_VALUE).orEmpty().trim()
+            if (value.startsWith("https://", true)) {
+                subscriptionInput = value
+                showSubscriptionDialog = true
+                status = "已扫描订阅地址，请确认后导入"
+            } else {
+                val parsed = NodeParser.parseUri(value)
+                if (parsed == null) {
+                    status = "二维码内容不是支持的节点链接或 HTTPS 订阅地址"
+                } else {
+                    if (nodes.none { it.rawUri == parsed.rawUri }) nodes.add(parsed)
+                    selectedId = parsed.id
+                    persist()
+                    status = "扫码添加成功：${parsed.name}"
+                }
+            }
+        }
+    }
+
     DisposableEffect(context) {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
@@ -266,7 +289,7 @@ private fun SwiftProxyHome(
                 TextButton(onClick = { showAddDialog = true }) { Text("+ 添加节点") }
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 OutlinedButton(
                     onClick = { showAddDialog = true },
                     modifier = Modifier.weight(1f),
@@ -277,6 +300,11 @@ private fun SwiftProxyHome(
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(12.dp)
                 ) { Text("导入订阅") }
+                OutlinedButton(
+                    onClick = { qrScannerLauncher.launch(Intent(context, QrScannerActivity::class.java)) },
+                    modifier = Modifier.weight(0.8f),
+                    shape = RoundedCornerShape(12.dp)
+                ) { Text("扫码") }
             }
 
             Spacer(Modifier.height(12.dp))
