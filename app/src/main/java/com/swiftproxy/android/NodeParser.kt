@@ -111,8 +111,8 @@ object NodeParser {
         val uri = URI(value)
         val authority = uri.rawAuthority ?: return null
         val endpointAuthority = authority.substringAfterLast('@')
-        val host = uri.host?.takeIf { it.isNotBlank() }
-            ?: extractHost(endpointAuthority)
+        val host = (uri.host?.takeIf { it.isNotBlank() }
+            ?: extractHost(endpointAuthority)).removePrefix("[").removeSuffix("]")
         if (host.isBlank()) return null
 
         val port = uri.port
