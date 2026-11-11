@@ -5,9 +5,12 @@ import android.net.ConnectivityManager
 import android.net.IpPrefix
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.LinkProperties
 import android.net.VpnService
 import android.os.Build
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.ParcelFileDescriptor
 import android.os.Process
 import android.system.OsConstants
@@ -46,6 +49,15 @@ internal class SwiftProxyPlatformInterface(
     private val connectivity = vpn.getSystemService(ConnectivityManager::class.java)
     private var tunDescriptor: ParcelFileDescriptor? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private val callbackHandler by lazy {
+        Handler(HandlerThread("swiftproxy-network").apply { start() }.looper)
+    }
+    private val networkRequest by lazy {
+        NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
+            .build()
+    }
 
     override fun usePlatformAutoDetectInterfaceControl(): Boolean = true
 
@@ -189,18 +201,30 @@ internal class SwiftProxyPlatformInterface(
                 updateDefaultInterface(listener, network)
             }
 
+            override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+                updateDefaultInterface(listener, network)
+            }
+
             override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
                 updateDefaultInterface(listener, network)
             }
 
             override fun onLost(network: Network) {
                 runCatching { listener.updateDefaultInterface("", -1, false, false) }
-                connectivity.activeNetwork?.let { updateDefaultInterface(listener, it) }
             }
         }
         networkCallback = callback
-        connectivity.registerDefaultNetworkCallback(callback)
-        connectivity.activeNetwork?.let { updateDefaultInterface(listener, it) }
+        when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+                connectivity.registerBestMatchingNetworkCallback(networkRequest, callback, callbackHandler)
+            }
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.P -> {
+                connectivity.requestNetwork(networkRequest, callback, callbackHandler)
+            }
+            else -> {
+                connectivity.registerDefaultNetworkCallback(callback, callbackHandler)
+            }
+        }
     }
 
     override fun closeDefaultInterfaceMonitor(listener: InterfaceUpdateListener) {
