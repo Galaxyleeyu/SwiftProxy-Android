@@ -1,8 +1,16 @@
 package com.swiftproxy.android
 
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.net.VpnService
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,6 +38,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -39,9 +48,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -109,14 +120,47 @@ private fun SwiftProxyHome(
     saveNodes: (List<ProxyNode>) -> Unit,
     fetchSubscription: (String, (Result<List<ProxyNode>>) -> Unit) -> Unit
 ) {
+    val context = LocalContext.current
     val nodes = remember { mutableStateListOf<ProxyNode>() }
     var showAddDialog by remember { mutableStateOf(false) }
     var showSubscriptionDialog by remember { mutableStateOf(false) }
     var manualInput by remember { mutableStateOf("") }
     var subscriptionInput by remember { mutableStateOf("") }
-    var status by remember { mutableStateOf("代理核心尚未接入，当前只能管理节点") }
+    var status by remember { mutableStateOf("选择节点后即可尝试建立 VPN 连接") }
     var importing by remember { mutableStateOf(false) }
     var selectedId by remember { mutableStateOf("") }
+    var connectionState by remember { mutableStateOf("disconnected") }
+    var pendingConfig by remember { mutableStateOf<String?>(null) }
+
+    val vpnPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val config = pendingConfig
+        pendingConfig = null
+        if (result.resultCode == ComponentActivity.RESULT_OK && config != null) {
+            startVpnService(context, config)
+        } else {
+            status = "未获得系统 VPN 授权"
+        }
+    }
+
+    DisposableEffect(context) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                if (intent?.action != SwiftProxyVpnService.ACTION_STATE) return
+                connectionState = intent.getStringExtra("state") ?: "disconnected"
+                status = intent.getStringExtra("message") ?: "连接状态已更新"
+            }
+        }
+        val filter = IntentFilter(SwiftProxyVpnService.ACTION_STATE)
+        if (Build.VERSION.SDK_INT >= 33) {
+            context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            context.registerReceiver(receiver, filter)
+        }
+        onDispose { runCatching { context.unregisterReceiver(receiver) } }
+    }
 
     LaunchedEffect(Unit) {
         nodes.clear()
@@ -125,6 +169,32 @@ private fun SwiftProxyHome(
     }
 
     fun persist() = saveNodes(nodes.toList())
+
+    fun requestConnect() {
+        val node = nodes.firstOrNull { it.id == selectedId }
+        if (node == null) {
+            status = "请先选择一个节点"
+            return
+        }
+        val config = runCatching { SingBoxConfigBuilder.build(node.rawUri) }.getOrElse {
+            status = "节点配置生成失败：${it.message ?: "请检查分享链接"}"
+            return
+        }
+        pendingConfig = config
+        val prepare = VpnService.prepare(context)
+        if (prepare != null) {
+            vpnPermissionLauncher.launch(prepare)
+        } else {
+            pendingConfig = null
+            startVpnService(context, config)
+        }
+    }
+
+    fun requestDisconnect() {
+        context.startService(Intent(context, SwiftProxyVpnService::class.java).setAction(SwiftProxyVpnService.ACTION_STOP))
+        connectionState = "disconnected"
+        status = "正在断开连接…"
+    }
 
     Surface(modifier = Modifier.fillMaxSize(), color = Background) {
         Column(
@@ -136,7 +206,7 @@ private fun SwiftProxyHome(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("SwiftProxy", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold)
-                Text("0.4.0 · 节点管理", color = Muted, fontSize = 12.sp)
+                Text("0.6.0 · sing-box", color = Muted, fontSize = 12.sp)
             }
 
             Spacer(Modifier.height(24.dp))
@@ -149,15 +219,37 @@ private fun SwiftProxyHome(
                     Text("连接状态", color = Muted, fontSize = 12.sp)
                     Spacer(Modifier.height(8.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        val active = connectionState == "connected" || connectionState == "starting"
                         Box(
-                            modifier = Modifier.background(Color(0xFF263448), CircleShape).padding(10.dp)
+                            modifier = Modifier.background(
+                                if (active) Color(0xFF1D493F) else Color(0xFF263448),
+                                CircleShape
+                            ).padding(10.dp)
                         ) {
-                            Text("OFF", color = Accent, fontWeight = FontWeight.Bold)
+                            Text(
+                                when (connectionState) {
+                                    "connected" -> "ON"
+                                    "starting" -> "…"
+                                    else -> "OFF"
+                                },
+                                color = if (active) Color(0xFF80E0B4) else Accent,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                         Spacer(Modifier.padding(6.dp))
                         Column {
-                            Text("尚未连接", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                            Text("代理核心正在开发中", color = Muted, fontSize = 12.sp)
+                            Text(
+                                when (connectionState) {
+                                    "connected" -> "代理核心已启动"
+                                    "starting" -> "正在连接"
+                                    "error" -> "连接失败"
+                                    else -> "尚未连接"
+                                },
+                                color = Color.White,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(status, color = Muted, fontSize = 12.sp)
                         }
                     }
                 }
@@ -187,7 +279,6 @@ private fun SwiftProxyHome(
             }
 
             Spacer(Modifier.height(12.dp))
-            Text(status, color = Muted, fontSize = 12.sp)
             Spacer(Modifier.height(10.dp))
 
             if (nodes.isEmpty()) {
@@ -234,14 +325,24 @@ private fun SwiftProxyHome(
 
             Spacer(Modifier.weight(1f))
             Button(
-                onClick = { status = "节点已保存；连接功能需要等待 sing-box 核心接入" },
-                enabled = false,
+                onClick = {
+                    if (connectionState == "connected" || connectionState == "starting") requestDisconnect()
+                    else requestConnect()
+                },
+                enabled = nodes.isNotEmpty() || connectionState == "connected" || connectionState == "starting",
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(disabledContainerColor = Color(0xFF263448), disabledContentColor = Muted)
-            ) { Text("连接功能开发中") }
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (connectionState == "connected") Color(0xFF9A4545) else Accent,
+                    contentColor = if (connectionState == "connected") Color.White else Background,
+                    disabledContainerColor = Color(0xFF263448),
+                    disabledContentColor = Muted
+                )
+            ) {
+                Text(if (connectionState == "connected" || connectionState == "starting") "断开连接" else "连接")
+            }
             Spacer(Modifier.height(8.dp))
-            Text("节点信息仅保存在本机应用内", color = Muted, fontSize = 11.sp)
+            Text("节点信息保存在本机；VPN 连接由 Android 系统授权", color = Muted, fontSize = 11.sp)
         }
     }
 
@@ -326,4 +427,11 @@ private fun SwiftProxyHome(
             dismissButton = { TextButton(enabled = !importing, onClick = { showSubscriptionDialog = false }) { Text("取消") } }
         )
     }
+}
+
+private fun startVpnService(context: Context, config: String) {
+    val intent = Intent(context, SwiftProxyVpnService::class.java)
+        .setAction(SwiftProxyVpnService.ACTION_START)
+        .putExtra(SwiftProxyVpnService.EXTRA_CONFIG, config)
+    ContextCompat.startForegroundService(context, intent)
 }
