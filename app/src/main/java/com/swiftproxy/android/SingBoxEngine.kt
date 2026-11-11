@@ -5,7 +5,6 @@ import android.util.Log
 import io.nekohasekai.libbox.CommandServer
 import io.nekohasekai.libbox.CommandServerHandler
 import io.nekohasekai.libbox.Libbox
-import io.nekohasekai.libbox.Notification
 import io.nekohasekai.libbox.OverrideOptions
 import io.nekohasekai.libbox.SetupOptions
 import io.nekohasekai.libbox.SystemProxyStatus
@@ -112,14 +111,6 @@ internal class SingBoxEngine(
 
     override fun setSystemProxyEnabled(isEnabled: Boolean) {
         // Android's VPN tunnel is the only proxy mode exposed by this app.
-    }
-
-    override fun sendNotification(notification: Notification) {
-        Log.i(TAG, "sing-box notification: ${notification.title}")
-    }
-
-    override fun cancelNotification(identifier: String, typeID: Int) {
-        Log.d(TAG, "sing-box notification dismissed: $identifier ($typeID)")
     }
 
     override fun triggerNativeCrash() {
