@@ -5,6 +5,8 @@ import android.util.Base64
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertEquals
 import org.junit.BeforeClass
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -25,6 +27,9 @@ class LibboxConfigInstrumentedTest {
             Base64.NO_WRAP
         )
         val shadowsocks = "ss://$ssCredentials#shadowsocks"
+        val parsedShadowsocks = NodeParser.parseUri(shadowsocks)
+        assertNotNull(parsedShadowsocks)
+        assertEquals(8388, parsedShadowsocks?.port)
 
         listOf(vless, vmess, shadowsocks, trojan).forEach { shareLink ->
             val config = SingBoxConfigBuilder.build(shareLink)
