@@ -122,7 +122,7 @@ object SingBoxConfigBuilder {
 
     private fun buildShadowsocks(raw: String): JSONObject {
         val uri = URI(raw)
-        val rawAuthority = (uri.rawAuthority ?: uri.rawSchemeSpecificPart.removePrefix("//").substringBefore('#')).substringBefore('?')
+        val rawAuthority = uri.rawSchemeSpecificPart.removePrefix("//").substringBefore('?').substringBefore('#')
         val at = rawAuthority.lastIndexOf('@')
         val userInfo: String
         val serverPart: String
