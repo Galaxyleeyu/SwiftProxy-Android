@@ -36,6 +36,7 @@ internal class SingBoxEngine(
         check(commandServer == null) { "代理核心已经启动" }
         stopping = false
         setupLibbox()
+        validateConfig(config)
         val loader = service.classLoader
         val handlerClass = Class.forName("io.nekohasekai.libbox.CommandServerHandler", true, loader)
         val platformClass = Class.forName("io.nekohasekai.libbox.PlatformInterface", true, loader)
@@ -84,6 +85,17 @@ internal class SingBoxEngine(
         server.javaClass.getMethod("startOrReloadService", String::class.java, overrideClass)
             .invoke(server, config, overrideOptions)
         Log.i(TAG, "sing-box service started")
+    }
+
+    private fun validateConfig(config: String) {
+        val libbox = Class.forName("io.nekohasekai.libbox.Libbox", true, service.classLoader)
+        val validator = libbox.methods.firstOrNull { it.name == "checkConfig" && it.parameterCount == 1 }
+            ?: error("当前 libbox 不支持配置校验")
+        try {
+            validator.invoke(null, config)
+        } catch (error: java.lang.reflect.InvocationTargetException) {
+            throw error.targetException ?: error
+        }
     }
 
     private fun setupLibbox() {
