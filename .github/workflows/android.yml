@@ -44,7 +44,7 @@ jobs:
           api-level: 34
           arch: x86_64
           target: google_apis
-          profile: Pixel_2
+          profile: pixel_2
           cores: 4
           emulator-boot-timeout: 900
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -no-metrics
