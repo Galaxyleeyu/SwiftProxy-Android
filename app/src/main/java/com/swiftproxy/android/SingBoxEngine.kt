@@ -143,6 +143,8 @@ internal class SingBoxEngine(
                 builder.addRoute("0.0.0.0", 0)
                 builder.addRoute("::", 0)
             }
+            addExcludedRouteIterator(builder, call(options, "getInet4RouteExcludeAddress", "inet4RouteExcludeAddress"))
+            addExcludedRouteIterator(builder, call(options, "getInet6RouteExcludeAddress", "inet6RouteExcludeAddress"))
             addStringIterator(builder, call(options, "getDnsServerAddress", "dnsServerAddress"))
         }
 
@@ -292,16 +294,33 @@ internal class SingBoxEngine(
     private fun addRouteIterator(builder: VpnService.Builder, iterator: Any?): Int {
         var count = 0
         forEachIterator(iterator) { address ->
-            val ip = call(address, "address")?.toString().orEmpty()
-            val prefix = (call(address, "prefix") as? Number)?.toInt() ?: 0
-            if (ip.isNotBlank()) {
-                builder.addRoute(ip, prefix)
-                count++
-            }
+            val route = parseRoute(address) ?: return@forEachIterator
+            builder.addRoute(route.first, route.second)
+            count++
         }
         return count
     }
 
+    private fun parseRoute(value: Any): Pair<String, Int>? {
+        if (value is String) {
+            val separator = value.lastIndexOf('/')
+            if (separator <= 0) return null
+            val prefix = value.substring(separator + 1).toIntOrNull() ?: return null
+            return value.substring(0, separator) to prefix
+        }
+        val ip = call(value, "address")?.toString().orEmpty()
+        val prefix = (call(value, "prefix") as? Number)?.toInt() ?: return null
+        return if (ip.isNotBlank()) ip to prefix else null
+    }
+
+    private fun addExcludedRouteIterator(builder: VpnService.Builder, iterator: Any?) {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) return
+        forEachIterator(iterator) { value ->
+            val route = parseRoute(value) ?: return@forEachIterator
+            runCatching { builder.excludeRoute(android.net.IpPrefix(route.first, route.second)) }
+                .onFailure { Log.w(TAG, "Unable to exclude VPN route: $value", it) }
+        }
+    }
     private fun addStringIterator(builder: VpnService.Builder, iterator: Any?) {
         forEachIterator(iterator) { value ->
             value.toString().takeIf { it.isNotBlank() }?.let { runCatching { builder.addDnsServer(it) } }
