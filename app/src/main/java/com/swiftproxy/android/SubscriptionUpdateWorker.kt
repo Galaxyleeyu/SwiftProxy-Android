@@ -25,15 +25,13 @@ class SubscriptionUpdateWorker(
             check(refreshed.isNotEmpty()) { "订阅更新没有解析到节点" }
 
             val newUris = refreshed.map { it.rawUri }.toSet()
-            val prefs = applicationContext.getSharedPreferences("swiftproxy", Context.MODE_PRIVATE)
-            val oldSubscriptionUris = prefs.getStringSet("subscription_nodes", emptySet()).orEmpty().toSet()
-            val allUris = prefs.getStringSet("nodes", emptySet()).orEmpty().toMutableSet()
+            val oldSubscriptionUris = SecureStore.readSubscriptionNodeUris(applicationContext)
+            val allUris = SecureStore.readNodeUris(applicationContext).toMutableSet()
             allUris.removeAll(oldSubscriptionUris)
             allUris.addAll(newUris)
-
-            prefs.edit()
-                .putStringSet("subscription_nodes", newUris)
-                .putStringSet("nodes", allUris)
+            SecureStore.saveSubscriptionNodeUris(applicationContext, newUris)
+            SecureStore.saveNodeUris(applicationContext, allUris)
+            applicationContext.getSharedPreferences("swiftproxy", Context.MODE_PRIVATE).edit()
                 .putLong("subscription_last_update", System.currentTimeMillis())
                 .apply()
         }.fold(
