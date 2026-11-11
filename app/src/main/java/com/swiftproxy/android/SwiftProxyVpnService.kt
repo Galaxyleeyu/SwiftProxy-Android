@@ -56,8 +56,8 @@ class SwiftProxyVpnService : VpnService() {
                     val instance = SingBoxEngine(this) {
                         publishState(this, "disconnected", "代理已停止")
                     }
-                    instance.start(config)
                     engine = instance
+                    instance.start(config)
                     publishState(this, "connected", "代理核心已启动")
                     updateNotification("SwiftProxy 正在运行")
                 }.onFailure { error ->
