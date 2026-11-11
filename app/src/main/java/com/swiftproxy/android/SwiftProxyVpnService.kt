@@ -7,6 +7,10 @@ import android.content.Intent
 import android.net.VpnService
 import android.os.Build
 import android.os.IBinder
+import android.os.Handler
+import android.os.Looper
+import android.net.TrafficStats
+import android.os.Process
 import android.util.Log
 
 class SwiftProxyVpnService : VpnService() {
@@ -14,6 +18,7 @@ class SwiftProxyVpnService : VpnService() {
         const val ACTION_START = "com.swiftproxy.android.action.START"
         const val ACTION_STOP = "com.swiftproxy.android.action.STOP"
         const val ACTION_STATE = "com.swiftproxy.android.action.STATE"
+        const val ACTION_STATS = "com.swiftproxy.android.action.STATS"
         const val EXTRA_CONFIG = "config"
         private const val CHANNEL_ID = "swiftproxy_vpn"
         private const val NOTIFICATION_ID = 1001
@@ -29,6 +34,27 @@ class SwiftProxyVpnService : VpnService() {
     }
 
     private var engine: SingBoxEngine? = null
+    private val statsHandler = Handler(Looper.getMainLooper())
+    private val statsTask = object : Runnable {
+        override fun run() {
+            if (engine != null) {
+                val rx = TrafficStats.getUidRxBytes(Process.myUid()).coerceAtLeast(0L)
+                val tx = TrafficStats.getUidTxBytes(Process.myUid()).coerceAtLeast(0L)
+                sendBroadcast(Intent(ACTION_STATS).setPackage(packageName)
+                    .putExtra("rx", rx).putExtra("tx", tx))
+                statsHandler.postDelayed(this, 1000L)
+            }
+        }
+    }
+
+    private fun startTrafficMonitor() {
+        statsHandler.removeCallbacks(statsTask)
+        statsHandler.post(statsTask)
+    }
+
+    private fun stopTrafficMonitor() {
+        statsHandler.removeCallbacks(statsTask)
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -38,6 +64,7 @@ class SwiftProxyVpnService : VpnService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
+                stopTrafficMonitor()
                 engine?.stop()
                 engine = null
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -60,6 +87,7 @@ class SwiftProxyVpnService : VpnService() {
                     instance.start(config)
                     publishState(this, "connected", "代理核心已启动")
                     updateNotification("SwiftProxy 正在运行")
+                    startTrafficMonitor()
                 }.onFailure { error ->
                     Log.e(TAG, "Failed to start proxy core", error)
                     engine?.stop()
@@ -74,6 +102,7 @@ class SwiftProxyVpnService : VpnService() {
     }
 
     override fun onRevoke() {
+        stopTrafficMonitor()
         engine?.stop()
         engine = null
         publishState(this, "disconnected", "VPN 权限已撤销")
@@ -83,6 +112,7 @@ class SwiftProxyVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        stopTrafficMonitor()
         engine?.stop()
         engine = null
         super.onDestroy()
