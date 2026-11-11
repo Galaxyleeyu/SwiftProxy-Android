@@ -161,7 +161,7 @@ private fun SwiftProxyHome(
                 } else {
                     if (nodes.none { it.rawUri == parsed.rawUri }) nodes.add(parsed)
                     selectedId = parsed.id
-                    persist()
+                    saveNodes(nodes.toList())
                     status = "扫码添加成功：${parsed.name}"
                 }
             }
