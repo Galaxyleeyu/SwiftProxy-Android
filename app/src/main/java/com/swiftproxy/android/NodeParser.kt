@@ -56,8 +56,8 @@ object NodeParser {
         val jsonText = decodeBase64(payload) ?: return null
         val json = JSONObject(jsonText)
         val server = json.optString("add").trim()
-        val port = json.optString("port").trim()
-        if (server.isBlank() || port.toIntOrNull() !in 1..65535) return null
+        val port = json.optString("port").trim().toIntOrNull() ?: return null
+        if (server.isBlank() || port !in 1..65535) return null
 
         val name = json.optString("ps").takeIf { it.isNotBlank() }
             ?: "$server · VMess"
