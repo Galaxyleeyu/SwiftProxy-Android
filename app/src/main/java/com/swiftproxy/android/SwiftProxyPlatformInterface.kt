@@ -18,6 +18,7 @@ import android.util.Log
 import io.nekohasekai.libbox.BridgeOptions
 import io.nekohasekai.libbox.BridgeSession
 import io.nekohasekai.libbox.ConnectionOwner
+import io.nekohasekai.libbox.ExchangeContext
 import io.nekohasekai.libbox.InterfaceUpdateListener
 import io.nekohasekai.libbox.Libbox
 import io.nekohasekai.libbox.LocalDNSTransport
@@ -47,6 +48,34 @@ internal class SwiftProxyPlatformInterface(
 ) : PlatformInterface {
     private val connectivity = vpn.getSystemService(ConnectivityManager::class.java)
     private var tunDescriptor: ParcelFileDescriptor? = null
+    @Volatile private var defaultNetwork: Network? = null
+    private val localResolver = object : LocalDNSTransport {
+        override fun raw(): Boolean = false
+
+        override fun lookup(ctx: ExchangeContext, network: String, domain: String) {
+            val active = defaultNetwork ?: error("尚未获取底层网络")
+            try {
+                val addresses = active.getAllByName(domain).filter { address ->
+                    when {
+                        network.endsWith("4") -> address !is Inet6Address
+                        network.endsWith("6") -> address is Inet6Address
+                        else -> true
+                    }
+                }
+                if (addresses.isEmpty()) {
+                    ctx.errorCode(3)
+                } else {
+                    ctx.success(addresses.joinToString("\\n") { it.hostAddress.orEmpty() })
+                }
+            } catch (_: java.net.UnknownHostException) {
+                ctx.errorCode(3)
+            }
+        }
+
+        override fun exchange(ctx: ExchangeContext, message: ByteArray) {
+            error("当前设备不支持原始 DNS 数据包转发")
+        }
+    }
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private val callbackHandler by lazy {
         Handler(HandlerThread("swiftproxy-network").apply { start() }.looper)
@@ -212,6 +241,7 @@ internal class SwiftProxyPlatformInterface(
             }
 
             override fun onLost(network: Network) {
+                if (defaultNetwork == network) defaultNetwork = null
                 runCatching { listener.updateDefaultInterface("", -1, false, false) }
             }
         }
@@ -232,9 +262,11 @@ internal class SwiftProxyPlatformInterface(
     override fun closeDefaultInterfaceMonitor(listener: InterfaceUpdateListener) {
         networkCallback?.let { runCatching { connectivity.unregisterNetworkCallback(it) } }
         networkCallback = null
+        defaultNetwork = null
     }
 
     private fun updateDefaultInterface(listener: InterfaceUpdateListener, network: Network) {
+        defaultNetwork = network
         val name = connectivity.getLinkProperties(network)?.interfaceName.orEmpty()
         val index = runCatching { SystemNetworkInterface.getByName(name)?.index ?: -1 }.getOrDefault(-1)
         runCatching { listener.updateDefaultInterface(name, index, false, false) }
@@ -291,7 +323,7 @@ internal class SwiftProxyPlatformInterface(
         Log.d(TAG, "sing-box notification dismissed: $identifier ($typeID)")
     }
     override fun readWIFIState(): WIFIState? = null
-    override fun localDNSTransport(): LocalDNSTransport? = null
+    override fun localDNSTransport(): LocalDNSTransport = localResolver
     override fun startNeighborMonitor(listener: NeighborUpdateListener?) {}
     override fun closeNeighborMonitor(listener: NeighborUpdateListener?) {}
 
@@ -328,6 +360,7 @@ internal class SwiftProxyPlatformInterface(
         tunDescriptor = null
         networkCallback?.let { runCatching { connectivity.unregisterNetworkCallback(it) } }
         networkCallback = null
+        defaultNetwork = null
     }
 
     private fun StringIterator.toList(): List<String> {
