@@ -4,9 +4,12 @@ import android.content.Context
 import android.net.VpnService
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.Network
+import android.net.LinkProperties
 import android.system.OsConstants
 import android.os.Process
 import java.net.NetworkInterface
+import java.net.InetSocketAddress
 import android.util.Log
 import java.lang.reflect.Proxy
 
@@ -25,6 +28,8 @@ internal class SingBoxEngine(
     private var handlerProxy: Any? = null
     private var platformProxy: Any? = null
     private var tunDescriptor: android.os.ParcelFileDescriptor? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var interfaceListener: Any? = null
 
     fun start(config: String) {
         check(commandServer == null) { "代理核心已经启动" }
@@ -52,10 +57,11 @@ internal class SingBoxEngine(
                 }
                 "openTun" -> openTun(args?.firstOrNull() ?: error("缺少 TUN 参数"))
                 "getInterfaces" -> getInterfaces()
-                "findConnectionOwner" -> findConnectionOwner()
+                "findConnectionOwner" -> findConnectionOwner(args)
+                "startDefaultInterfaceMonitor" -> startNetworkMonitor(args?.firstOrNull())
+                "closeDefaultInterfaceMonitor" -> stopNetworkMonitor()
                 "underNetworkExtension", "includeAllNetworks",
                 "usePlatformShell", "usePlatformBridge", "usePlatformAutoRedirect" -> false
-                "startDefaultInterfaceMonitor", "closeDefaultInterfaceMonitor",
                 "clearDNSCache", "startNeighborMonitor", "closeNeighborMonitor",
                 "registerMyInterface" -> null
                 "tailscaleHostname" -> "SwiftProxy"
@@ -90,8 +96,8 @@ internal class SingBoxEngine(
         setProperty(options, "fixAndroidStack", true)
         setProperty(options, "logMaxLines", 3000)
         setProperty(options, "debug", false)
-        setProperty(options, "appVersion", "4")
-        setProperty(options, "appMarketingVersion", "0.5.0")
+        setProperty(options, "appVersion", "5")
+        setProperty(options, "appMarketingVersion", "0.6.0")
         val setup = libbox.methods.firstOrNull { it.name == "setup" && it.parameterCount == 1 }
             ?: error("libbox.setup API 不存在")
         setup.invoke(null, options)
@@ -192,14 +198,74 @@ internal class SingBoxEngine(
         }
     }
 
-    private fun findConnectionOwner(): Any {
+    private fun findConnectionOwner(args: Array<out Any?>?): Any {
+        require(args != null && args.size >= 5) { "连接归属参数不完整" }
+        val uid = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            val connectivity = service.getSystemService(ConnectivityManager::class.java)
+            connectivity.getConnectionOwnerUid(
+                (args[0] as Number).toInt(),
+                InetSocketAddress(args[1].toString(), (args[2] as Number).toInt()),
+                InetSocketAddress(args[3].toString(), (args[4] as Number).toInt())
+            )
+        } else {
+            val libbox = Class.forName("io.nekohasekai.libbox.Libbox", true, service.classLoader)
+            val method = libbox.methods.first { it.name == "findConnectionOwner" && it.parameterCount == 5 }
+            return method.invoke(null, *args) ?: error("无法确定连接所属应用")
+        }
+        check(uid != Process.INVALID_UID) { "无法确定连接所属应用" }
+        val packages = service.packageManager.getPackagesForUid(uid)?.toList().orEmpty()
         val ownerClass = Class.forName("io.nekohasekai.libbox.ConnectionOwner", true, service.classLoader)
         val owner = ownerClass.getDeclaredConstructor().newInstance()
-        setProperty(owner, "userId", Process.myUid())
-        setProperty(owner, "userName", service.packageName)
+        setProperty(owner, "userId", uid)
+        setProperty(owner, "userName", packages.firstOrNull().orEmpty())
         val iteratorClass = Class.forName("io.nekohasekai.libbox.StringIterator", true, service.classLoader)
-        setProperty(owner, "androidPackageNames", stringIterator(iteratorClass, listOf(service.packageName)))
+        setProperty(owner, "androidPackageNames", stringIterator(iteratorClass, packages))
         return owner
+    }
+
+    private fun startNetworkMonitor(listener: Any?) {
+        if (listener == null) return
+        interfaceListener = listener
+        if (networkCallback != null) return
+        val connectivity = service.getSystemService(ConnectivityManager::class.java)
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) = updateDefaultInterface(network)
+            override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) = updateDefaultInterface(network)
+            override fun onLost(network: Network) {
+                updateListener("", -1)
+                val active = connectivity.activeNetwork
+                if (active != null && active != network) updateDefaultInterface(active)
+            }
+        }
+        networkCallback = callback
+        runCatching {
+            connectivity.registerDefaultNetworkCallback(callback)
+            connectivity.activeNetwork?.let { updateDefaultInterface(it) }
+        }.onFailure { Log.w(TAG, "Unable to monitor default network", it) }
+    }
+
+    private fun updateDefaultInterface(network: Network) {
+        val connectivity = service.getSystemService(ConnectivityManager::class.java)
+        val link = connectivity.getLinkProperties(network) ?: return updateListener("", -1)
+        val name = link.interfaceName ?: return updateListener("", -1)
+        val index = runCatching { NetworkInterface.getByName(name)?.index ?: -1 }.getOrDefault(-1)
+        updateListener(name, index)
+    }
+
+    private fun updateListener(name: String, index: Int) {
+        val listener = interfaceListener ?: return
+        runCatching {
+            listener.javaClass.getMethod("updateDefaultInterface", String::class.java,
+                Int::class.javaPrimitiveType, Boolean::class.javaPrimitiveType, Boolean::class.javaPrimitiveType)
+                .invoke(listener, name, index, false, false)
+        }.onFailure { Log.w(TAG, "Default interface update callback failed", it) }
+    }
+
+    private fun stopNetworkMonitor() {
+        val callback = networkCallback ?: return
+        runCatching { service.getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(callback) }
+        networkCallback = null
+        interfaceListener = null
     }
     private fun addAddressIterator(builder: VpnService.Builder, iterator: Any?) {
         forEachIterator(iterator) { address ->
@@ -258,6 +324,7 @@ internal class SingBoxEngine(
         }
         runCatching { tunDescriptor?.close() }
         tunDescriptor = null
+        stopNetworkMonitor()
         handlerProxy = null
         platformProxy = null
         onStopped()
