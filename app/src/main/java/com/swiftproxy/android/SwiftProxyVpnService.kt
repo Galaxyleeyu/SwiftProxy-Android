@@ -23,6 +23,10 @@ class SwiftProxyVpnService : VpnService() {
         private const val CHANNEL_ID = "swiftproxy_vpn"
         private const val NOTIFICATION_ID = 1001
         private const val TAG = "SwiftProxyVpn"
+        @Volatile private var activeService: SwiftProxyVpnService? = null
+
+        fun protectSocket(socket: java.net.Socket): Boolean =
+            activeService?.protect(socket) ?: true
 
         fun publishState(service: VpnService, state: String, message: String? = null) {
             service.sendBroadcast(
@@ -58,6 +62,7 @@ class SwiftProxyVpnService : VpnService() {
 
     override fun onCreate() {
         super.onCreate()
+        activeService = this
         createNotificationChannel()
     }
 
@@ -117,6 +122,7 @@ class SwiftProxyVpnService : VpnService() {
         stopTrafficMonitor()
         engine?.stop()
         engine = null
+        if (activeService === this) activeService = null
         super.onDestroy()
     }
 
