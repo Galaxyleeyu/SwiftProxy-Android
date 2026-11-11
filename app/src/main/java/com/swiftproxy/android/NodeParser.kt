@@ -30,7 +30,7 @@ object NodeParser {
         return decoded.lineSequence().mapNotNull { line ->
             val value = line.trim()
             if (value.isEmpty() || value.startsWith("#")) null else parseUri(value)
-        }.distinctBy { it.rawUri }
+        }.distinctBy { it.rawUri }.toList()
     }
 
     fun parseUri(value: String): ProxyNode? {
