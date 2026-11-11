@@ -11,6 +11,7 @@ data class ProxyNode(
     val name: String,
     val type: String,
     val server: String,
+    val port: Int,
     val rawUri: String
 )
 
@@ -66,6 +67,7 @@ object NodeParser {
             name = name,
             type = "VMESS",
             server = server,
+            port = port,
             rawUri = value
         )
     }
@@ -100,6 +102,7 @@ object NodeParser {
             name = name,
             type = "SS",
             server = endpoint.first,
+            port = endpoint.second,
             rawUri = value
         )
     }
@@ -127,6 +130,7 @@ object NodeParser {
             name = name,
             type = scheme.uppercase(),
             server = host,
+            port = port,
             rawUri = value
         )
     }
