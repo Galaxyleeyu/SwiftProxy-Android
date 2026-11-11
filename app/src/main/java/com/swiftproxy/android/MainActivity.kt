@@ -215,6 +215,13 @@ private fun SwiftProxyHome(
         nodes.clear()
         nodes.addAll(loadNodes())
         selectedId = nodes.firstOrNull()?.id.orEmpty()
+        val prefs = context.getSharedPreferences("swiftproxy", Context.MODE_PRIVATE)
+        connectionState = if (SwiftProxyVpnService.isRunning()) {
+            prefs.getString("vpn_state", "starting") ?: "starting"
+        } else {
+            "disconnected"
+        }
+        status = prefs.getString("vpn_message", "选择节点后即可尝试建立 VPN 连接") ?: "选择节点后即可尝试建立 VPN 连接"
     }
 
     fun persist() = saveNodes(nodes.toList())
