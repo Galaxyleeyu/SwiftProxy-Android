@@ -89,6 +89,8 @@ internal class SwiftProxyPlatformInterface(
 
     override fun usePlatformAutoDetectInterfaceControl(): Boolean = true
 
+    override fun useProcFS(): Boolean = false
+
     override fun autoDetectInterfaceControl(fd: Int) {
         check(vpn.protect(fd)) { "Android 无法保护代理核心的出站 socket" }
     }
