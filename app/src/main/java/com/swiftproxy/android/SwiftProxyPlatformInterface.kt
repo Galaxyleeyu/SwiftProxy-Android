@@ -15,8 +15,6 @@ import android.os.ParcelFileDescriptor
 import android.os.Process
 import android.system.OsConstants
 import android.util.Log
-import io.nekohasekai.libbox.AutoRedirectHandler
-import io.nekohasekai.libbox.AutoRedirectSession
 import io.nekohasekai.libbox.BridgeOptions
 import io.nekohasekai.libbox.BridgeSession
 import io.nekohasekai.libbox.ConnectionOwner
@@ -25,6 +23,7 @@ import io.nekohasekai.libbox.Libbox
 import io.nekohasekai.libbox.LocalDNSTransport
 import io.nekohasekai.libbox.NeighborUpdateListener
 import io.nekohasekai.libbox.NetworkInterfaceIterator
+import io.nekohasekai.libbox.Notification
 import io.nekohasekai.libbox.PlatformInterface
 import io.nekohasekai.libbox.PlatformUser
 import io.nekohasekai.libbox.ShellSession
@@ -181,16 +180,19 @@ internal class SwiftProxyPlatformInterface(
                 InetSocketAddress(destinationAddress, destinationPort)
             )
         } else {
-            return Libbox.findConnectionOwner(
-                ipProtocol, sourceAddress, sourcePort, destinationAddress, destinationPort
-            )
+            val fallback = Libbox::class.java.methods.firstOrNull {
+                it.name == "findConnectionOwner" && it.parameterCount == 5
+            } ?: error("Android 10 以下无法通过公开 API 查询连接所属应用")
+            return fallback.invoke(
+                null, ipProtocol, sourceAddress, sourcePort, destinationAddress, destinationPort
+            ) as? ConnectionOwner ?: error("无法查询连接所属应用")
         }
         check(uid != Process.INVALID_UID) { "找不到连接所属应用" }
         val packages = vpn.packageManager.getPackagesForUid(uid)
         return ConnectionOwner().apply {
             userId = uid
             userName = packages?.firstOrNull() ?: ""
-            androidPackageNames = StringArray(packages?.toList().orEmpty().iterator())
+            setAndroidPackageNames(StringArray(packages?.toList().orEmpty().iterator()))
         }
     }
 
@@ -253,9 +255,6 @@ internal class SwiftProxyPlatformInterface(
                 mtu = runCatching { systemInterface.mtu }.getOrDefault(1500)
                 addresses = StringArray(systemInterface.interfaceAddresses.map { it.toPrefix() }.iterator())
                 dnsServer = StringArray(link.dnsServers.mapNotNull { it.hostAddress }.iterator())
-                dnsSearchDomain = StringArray(
-                    link.domains?.split(' ')?.filter { it.isNotBlank() }.orEmpty().iterator()
-                )
                 gateway = StringArray(
                     link.routes.filter { it.destination.prefixLength == 0 }
                         .mapNotNull { it.gateway?.takeUnless { gateway -> gateway.isAnyLocalAddress }?.hostAddress }
@@ -285,6 +284,12 @@ internal class SwiftProxyPlatformInterface(
     override fun underNetworkExtension(): Boolean = false
     override fun includeAllNetworks(): Boolean = false
     override fun clearDNSCache() {}
+    override fun sendNotification(notification: Notification) {
+        Log.i(TAG, "sing-box notification: ${notification.title}")
+    }
+    override fun cancelNotification(identifier: String, typeID: Int) {
+        Log.d(TAG, "sing-box notification dismissed: $identifier ($typeID)")
+    }
     override fun readWIFIState(): WIFIState? = null
     override fun localDNSTransport(): LocalDNSTransport? = null
     override fun startNeighborMonitor(listener: NeighborUpdateListener?) {}
@@ -308,10 +313,6 @@ internal class SwiftProxyPlatformInterface(
     override fun usePlatformBridge(): Boolean = false
     override fun createBridge(options: BridgeOptions?): BridgeSession =
         error("SwiftProxy 不支持 root 网络桥接")
-
-    override fun usePlatformAutoRedirect(): Boolean = false
-    override fun createAutoRedirect(options: ByteArray?, handler: AutoRedirectHandler?): AutoRedirectSession =
-        error("SwiftProxy 不支持 root 自动重定向")
 
     override fun lookupUser(username: String?): PlatformUser = PlatformUser().apply {
         this.username = username?.takeIf { it.isNotBlank() } ?: vpn.packageName
