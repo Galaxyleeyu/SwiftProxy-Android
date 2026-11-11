@@ -132,6 +132,8 @@ private fun SwiftProxyHome(
     var importing by remember { mutableStateOf(false) }
     var selectedId by remember { mutableStateOf("") }
     var connectionState by remember { mutableStateOf("disconnected") }
+    var rxBytes by remember { mutableStateOf(0L) }
+    var txBytes by remember { mutableStateOf(0L) }
     var autoSwitch by remember { mutableStateOf(true) }
     var pendingConfig by remember { mutableStateOf<String?>(null) }
 
@@ -173,9 +175,16 @@ private fun SwiftProxyHome(
     DisposableEffect(context) {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
-                if (intent?.action != SwiftProxyVpnService.ACTION_STATE) return
-                connectionState = intent.getStringExtra("state") ?: "disconnected"
-                status = intent.getStringExtra("message") ?: "连接状态已更新"
+                when (intent?.action) {
+                    SwiftProxyVpnService.ACTION_STATS -> {
+                        rxBytes = intent.getLongExtra("rx", 0L)
+                        txBytes = intent.getLongExtra("tx", 0L)
+                    }
+                    SwiftProxyVpnService.ACTION_STATE -> {
+                        connectionState = intent.getStringExtra("state") ?: "disconnected"
+                        status = intent.getStringExtra("message") ?: "连接状态已更新"
+                    }
+                }
             }
         }
         val filter = IntentFilter(SwiftProxyVpnService.ACTION_STATE)
@@ -276,6 +285,7 @@ private fun SwiftProxyHome(
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(status, color = Muted, fontSize = 12.sp)
+                            Text("应用网络流量  ↓ ${formatBytes(rxBytes)}   ↑ ${formatBytes(txBytes)}", color = Muted, fontSize = 11.sp)
                         }
                     }
                 }
@@ -485,4 +495,13 @@ private fun startVpnService(context: Context, config: String) {
         .setAction(SwiftProxyVpnService.ACTION_START)
         .putExtra(SwiftProxyVpnService.EXTRA_CONFIG, config)
     ContextCompat.startForegroundService(context, intent)
+}
+
+private fun formatBytes(bytes: Long): String {
+    if (bytes < 1024L) return "$bytes B"
+    val kb = bytes / 1024.0
+    if (kb < 1024.0) return String.format(java.util.Locale.ROOT, "%.1f KB", kb)
+    val mb = kb / 1024.0
+    if (mb < 1024.0) return String.format(java.util.Locale.ROOT, "%.1f MB", mb)
+    return String.format(java.util.Locale.ROOT, "%.2f GB", mb / 1024.0)
 }
