@@ -13,38 +13,49 @@ import java.nio.charset.StandardCharsets
  * Android VPN service is connected.
  */
 object SingBoxConfigBuilder {
-    fun build(rawUri: String): String {
-        val scheme = rawUri.substringBefore("://", "").lowercase()
-        val outbound = when (scheme) {
-            "vmess" -> buildVmess(rawUri)
-            "vless" -> buildVless(rawUri)
-            "trojan" -> buildTrojan(rawUri)
-            "ss" -> buildShadowsocks(rawUri)
-            else -> error("不支持的节点协议：$scheme")
+    fun build(rawUri: String): String = buildForNodes(listOf(rawUri), rawUri, autoSwitch = false)
+
+    fun buildForNodes(rawUris: List<String>, selectedRawUri: String? = null, autoSwitch: Boolean = true): String {
+        val candidates = if (autoSwitch) rawUris.distinct() else listOfNotNull(selectedRawUri)
+        require(candidates.isNotEmpty()) { "没有可用节点" }
+        val nodeOutbounds = candidates.mapIndexedNotNull { index, raw ->
+            runCatching {
+                val scheme = raw.substringBefore("://", "").lowercase()
+                val outbound = when (scheme) {
+                    "vmess" -> buildVmess(raw)
+                    "vless" -> buildVless(raw)
+                    "trojan" -> buildTrojan(raw)
+                    "ss" -> buildShadowsocks(raw)
+                    else -> error("不支持的节点协议：$scheme")
+                }
+                outbound.put("tag", "node-$index")
+            }.getOrNull()
         }
+        require(nodeOutbounds.isNotEmpty()) { "节点配置无法生成" }
+        val outbounds = JSONArray()
+        nodeOutbounds.forEach { outbounds.put(it) }
+        val finalTag = if (autoSwitch && nodeOutbounds.size > 1) {
+            val members = JSONArray()
+            nodeOutbounds.indices.forEach { members.put("node-$it") }
+            outbounds.put(JSONObject().put("type", "urltest").put("tag", "auto")
+                .put("outbounds", members)
+                .put("url", "https://www.gstatic.com/generate_204")
+                .put("interval", "3m").put("tolerance", 50))
+            "auto"
+        } else "node-0"
+        outbounds.put(JSONObject().put("type", "direct").put("tag", "direct"))
+        outbounds.put(JSONObject().put("type", "block").put("tag", "block"))
         return JSONObject()
             .put("log", JSONObject().put("level", "warn"))
-            .put("inbounds", JSONArray().put(
-                JSONObject()
-                    .put("type", "tun")
-                    .put("tag", "tun-in")
-                    .put("address", JSONArray().put("172.19.0.1/30").put("fdfe:dcba:9876::1/126"))
-                    .put("mtu", 9000)
-                    .put("auto_route", true)
-                    .put("strict_route", true)
-                    .put("stack", "mixed")
-                    .put("sniff", true)
-            ))
-            .put("outbounds", JSONArray()
-                .put(outbound)
-                .put(JSONObject().put("type", "direct").put("tag", "direct"))
-                .put(JSONObject().put("type", "block").put("tag", "block")))
-            .put("route", JSONObject()
-                .put("auto_detect_interface", true)
-                .put("final", "proxy"))
+            .put("inbounds", JSONArray().put(JSONObject()
+                .put("type", "tun").put("tag", "tun-in")
+                .put("address", JSONArray().put("172.19.0.1/30").put("fdfe:dcba:9876::1/126"))
+                .put("mtu", 9000).put("auto_route", true).put("strict_route", true)
+                .put("stack", "mixed").put("sniff", true)))
+            .put("outbounds", outbounds)
+            .put("route", JSONObject().put("auto_detect_interface", true).put("final", finalTag))
             .toString(2)
     }
-
     private fun buildVless(raw: String): JSONObject {
         val uri = URI(raw)
         val query = queryMap(uri.rawQuery)
