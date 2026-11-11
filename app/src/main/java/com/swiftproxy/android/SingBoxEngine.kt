@@ -2,6 +2,11 @@ package com.swiftproxy.android
 
 import android.content.Context
 import android.net.VpnService
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.system.OsConstants
+import android.os.Process
+import java.net.NetworkInterface
 import android.util.Log
 import java.lang.reflect.Proxy
 
@@ -46,6 +51,8 @@ internal class SingBoxEngine(
                     null
                 }
                 "openTun" -> openTun(args?.firstOrNull() ?: error("缺少 TUN 参数"))
+                "getInterfaces" -> getInterfaces()
+                "findConnectionOwner" -> findConnectionOwner()
                 "underNetworkExtension", "includeAllNetworks",
                 "usePlatformShell", "usePlatformBridge", "usePlatformAutoRedirect" -> false
                 "startDefaultInterfaceMonitor", "closeDefaultInterfaceMonitor",
@@ -125,6 +132,75 @@ internal class SingBoxEngine(
         return established.fd
     }
 
+    private fun getInterfaces(): Any {
+        val loader = service.classLoader
+        val itemClass = Class.forName("io.nekohasekai.libbox.NetworkInterface", true, loader)
+        val iteratorClass = Class.forName("io.nekohasekai.libbox.NetworkInterfaceIterator", true, loader)
+        val stringIteratorClass = Class.forName("io.nekohasekai.libbox.StringIterator", true, loader)
+        val connectivity = service.getSystemService(ConnectivityManager::class.java)
+        val networkInterfaces = NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
+        val items = networkInterfaces.mapNotNull { networkInterface ->
+            runCatching {
+                val item = itemClass.getDeclaredConstructor().newInstance()
+                setProperty(item, "name", networkInterface.name)
+                setProperty(item, "index", networkInterface.index)
+                setProperty(item, "mtu", runCatching { networkInterface.mtu }.getOrDefault(1500))
+                val addresses = networkInterface.interfaceAddresses.map { it.address.hostAddress + "/" + it.networkPrefixLength }
+                setProperty(item, "addresses", stringIterator(stringIteratorClass, addresses))
+                var flags = 0
+                if (networkInterface.isUp) flags = flags or OsConstants.IFF_UP or OsConstants.IFF_RUNNING
+                if (networkInterface.isLoopback) flags = flags or OsConstants.IFF_LOOPBACK
+                if (networkInterface.isPointToPoint) flags = flags or OsConstants.IFF_POINTOPOINT
+                if (networkInterface.supportsMulticast()) flags = flags or OsConstants.IFF_MULTICAST
+                setProperty(item, "flags", flags)
+                val activeNetwork = connectivity.activeNetwork
+                val capabilities = activeNetwork?.let { connectivity.getNetworkCapabilities(it) }
+                val linkProperties = activeNetwork?.let { connectivity.getLinkProperties(it) }
+                val typeField = when {
+                    capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true -> "InterfaceTypeWIFI"
+                    capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true -> "InterfaceTypeCellular"
+                    capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true -> "InterfaceTypeEthernet"
+                    else -> "InterfaceTypeOther"
+                }
+                val libbox = Class.forName("io.nekohasekai.libbox.Libbox", true, loader)
+                val type = runCatching { libbox.getField(typeField).get(null) }.getOrNull()
+                if (type != null) setProperty(item, "type", type)
+                setProperty(item, "dnsServer", stringIterator(stringIteratorClass, linkProperties?.dnsServers?.mapNotNull { it.hostAddress }.orEmpty()))
+                setProperty(item, "gateway", stringIterator(stringIteratorClass, linkProperties?.routes?.filter { it.destination.prefixLength == 0 }?.mapNotNull { it.gateway?.hostAddress }.orEmpty()))
+                setProperty(item, "metered", capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) != true)
+                item
+            }.getOrNull()
+        }
+        var index = 0
+        return Proxy.newProxyInstance(loader, arrayOf(iteratorClass)) { _, method, _ ->
+            when (method.name) {
+                "hasNext" -> index < items.size
+                "next" -> if (index < items.size) items[index++] else null
+                else -> defaultValue(method.returnType)
+            }
+        }
+    }
+
+    private fun stringIterator(iteratorClass: Class<*>, values: List<String>): Any {
+        var index = 0
+        return Proxy.newProxyInstance(service.classLoader, arrayOf(iteratorClass)) { _, method, _ ->
+            when (method.name) {
+                "hasNext" -> index < values.size
+                "next" -> if (index < values.size) values[index++] else ""
+                else -> defaultValue(method.returnType)
+            }
+        }
+    }
+
+    private fun findConnectionOwner(): Any {
+        val ownerClass = Class.forName("io.nekohasekai.libbox.ConnectionOwner", true, service.classLoader)
+        val owner = ownerClass.getDeclaredConstructor().newInstance()
+        setProperty(owner, "userId", Process.myUid())
+        setProperty(owner, "userName", service.packageName)
+        val iteratorClass = Class.forName("io.nekohasekai.libbox.StringIterator", true, service.classLoader)
+        setProperty(owner, "androidPackageNames", stringIterator(iteratorClass, listOf(service.packageName)))
+        return owner
+    }
     private fun addAddressIterator(builder: VpnService.Builder, iterator: Any?) {
         forEachIterator(iterator) { address ->
             val ip = call(address, "address")?.toString().orEmpty()
