@@ -18,18 +18,19 @@ object SingBoxConfigBuilder {
     fun buildForNodes(rawUris: List<String>, selectedRawUri: String? = null, autoSwitch: Boolean = true): String {
         val candidates = if (autoSwitch) rawUris.distinct() else listOfNotNull(selectedRawUri)
         require(candidates.isNotEmpty()) { "没有可用节点" }
-        val nodeOutbounds = candidates.mapIndexedNotNull { index, raw ->
+        val nodeOutbounds = candidates.mapNotNull { raw ->
             runCatching {
                 val scheme = raw.substringBefore("://", "").lowercase()
-                val outbound = when (scheme) {
+                when (scheme) {
                     "vmess" -> buildVmess(raw)
                     "vless" -> buildVless(raw)
                     "trojan" -> buildTrojan(raw)
                     "ss" -> buildShadowsocks(raw)
                     else -> error("不支持的节点协议：$scheme")
                 }
-                outbound.put("tag", "node-$index")
             }.getOrNull()
+        }.mapIndexed { index, outbound ->
+            outbound.put("tag", "node-$index")
         }
         require(nodeOutbounds.isNotEmpty()) { "节点配置无法生成" }
         val outbounds = JSONArray()
