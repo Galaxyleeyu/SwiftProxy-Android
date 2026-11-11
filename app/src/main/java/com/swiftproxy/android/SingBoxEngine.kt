@@ -9,6 +9,7 @@ import android.net.LinkProperties
 import android.system.OsConstants
 import android.os.Process
 import java.net.NetworkInterface
+import java.net.InetAddress
 import java.net.InetSocketAddress
 import android.util.Log
 import java.lang.reflect.Proxy
@@ -317,7 +318,7 @@ internal class SingBoxEngine(
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) return
         forEachIterator(iterator) { value ->
             val route = parseRoute(value) ?: return@forEachIterator
-            runCatching { builder.excludeRoute(android.net.IpPrefix(route.first + "/" + route.second)) }
+            runCatching { builder.excludeRoute(android.net.IpPrefix(InetAddress.getByName(route.first), route.second)) }
                 .onFailure { Log.w(TAG, "Unable to exclude VPN route: $value", it) }
         }
     }
