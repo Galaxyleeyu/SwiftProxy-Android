@@ -1,2 +1,2 @@
-# -SwiftProxy-Android
+# SwiftProxy-Android
 Android proxy client
