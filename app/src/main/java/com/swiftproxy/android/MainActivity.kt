@@ -187,7 +187,9 @@ private fun SwiftProxyHome(
                 }
             }
         }
-        val filter = IntentFilter(SwiftProxyVpnService.ACTION_STATE)
+        val filter = IntentFilter(SwiftProxyVpnService.ACTION_STATE).apply {
+            addAction(SwiftProxyVpnService.ACTION_STATS)
+        }
         if (Build.VERSION.SDK_INT >= 33) {
             context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
