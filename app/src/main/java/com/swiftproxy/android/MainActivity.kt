@@ -75,13 +75,10 @@ class MainActivity : ComponentActivity() {
             )) {
                 SwiftProxyHome(
                     loadNodes = {
-                        getSharedPreferences("swiftproxy", MODE_PRIVATE)
-                            .getStringSet("nodes", emptySet()).orEmpty()
-                            .mapNotNull(NodeParser::parseUri)
+                        SecureStore.readNodeUris(this@MainActivity).mapNotNull(NodeParser::parseUri)
                     },
                     saveNodes = { nodes ->
-                        getSharedPreferences("swiftproxy", MODE_PRIVATE).edit()
-                            .putStringSet("nodes", nodes.map { it.rawUri }.toSet()).apply()
+                        SecureStore.saveNodeUris(this@MainActivity, nodes.map { it.rawUri }.toSet())
                     },
                     fetchSubscription = ::fetchSubscription
                 )
@@ -488,8 +485,7 @@ private fun SwiftProxyHome(
                     fetchSubscription(subscriptionInput.trim()) { result ->
                         importing = false
                         result.onSuccess { imported ->
-                            val prefs = context.getSharedPreferences("swiftproxy", Context.MODE_PRIVATE)
-                            val previousSubscriptionNodes = prefs.getStringSet("subscription_nodes", emptySet()).orEmpty().toSet()
+                            val previousSubscriptionNodes = SecureStore.readSubscriptionNodeUris(context)
                             val mergedUris = nodes.map { it.rawUri }.toMutableSet()
                             mergedUris.removeAll(previousSubscriptionNodes)
                             val importedUris = imported.map { it.rawUri }.toSet()
@@ -498,7 +494,7 @@ private fun SwiftProxyHome(
                             nodes.addAll(mergedUris.mapNotNull(NodeParser::parseUri))
                             selectedId = nodes.firstOrNull()?.id.orEmpty()
                             persist()
-                            prefs.edit().putStringSet("subscription_nodes", importedUris).apply()
+                            SecureStore.saveSubscriptionNodeUris(context, importedUris)
                             SecureStore.saveSubscriptionUrl(context, subscriptionInput.trim())
                             SubscriptionUpdateWorker.schedule(context)
                             status = "订阅导入完成：${imported.size} 个节点；已开启每 12 小时自动更新"
