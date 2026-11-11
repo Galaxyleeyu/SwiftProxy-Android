@@ -92,28 +92,41 @@ class MainActivity : ComponentActivity() {
     private fun fetchSubscription(address: String, callback: (Result<List<ProxyNode>>) -> Unit) {
         Thread {
             try {
-                val url = URL(address)
-                require(url.protocol.equals("https", ignoreCase = true)) {
-                    "为保护订阅信息，目前只允许 HTTPS 地址"
-                }
-                val connection = (url.openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 15000
-                    readTimeout = 20000
-                    requestMethod = "GET"
-                    setRequestProperty("User-Agent", "SwiftProxy-Android")
-                }
-                try {
-                    val text = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                    val nodes = NodeParser.parseSubscription(text)
-                    if (nodes.isEmpty()) error("没有识别到 VLESS、VMess、SS 或 Trojan 节点")
-                    runOnUiThread { callback(Result.success(nodes)) }
-                } finally {
-                    connection.disconnect()
-                }
+                val body = fetchHttpsSubscription(address)
+                val nodes = NodeParser.parseSubscription(body)
+                if (nodes.isEmpty()) error("没有识别到 VLESS、VMess、SS 或 Trojan 节点")
+                runOnUiThread { callback(Result.success(nodes)) }
             } catch (error: Exception) {
                 runOnUiThread { callback(Result.failure(error)) }
             }
         }.start()
+    }
+
+    private fun fetchHttpsSubscription(initialAddress: String): String {
+        var current = URL(initialAddress)
+        repeat(5) {
+            require(current.protocol.equals("https", true)) { "订阅重定向必须保持 HTTPS" }
+            val connection = (current.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 15000
+                readTimeout = 20000
+                instanceFollowRedirects = false
+                requestMethod = "GET"
+                setRequestProperty("User-Agent", "SwiftProxy-Android")
+            }
+            try {
+                val code = connection.responseCode
+                if (code in 300..399) {
+                    val location = connection.getHeaderField("Location") ?: error("订阅重定向缺少目标地址")
+                    current = URL(current, location)
+                    return@repeat
+                }
+                check(code in 200..299) { "订阅服务器返回 HTTP $code" }
+                return connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            } finally {
+                connection.disconnect()
+            }
+        }
+        error("订阅重定向次数过多")
     }
 }
 
