@@ -5,13 +5,14 @@
 - Kotlin + Jetpack Compose / Material 3 interface.
 - VLESS, VMess, Shadowsocks and Trojan share-link parsing.
 - Manual node entry, HTTPS subscription import and QR-code import.
-- Subscription URL encrypted with Android Keystore (AES-GCM).
+- Per-node TCP endpoint latency checks (clearly distinguished from full proxy-handshake latency).
+- Subscription URL and saved node share links encrypted with Android Keystore (AES-GCM); Android backup is disabled for local credentials.
 - WorkManager refreshes the saved subscription every 12 hours when a network is available.
 - sing-box libbox 1.14.3 integration through CommandServer and PlatformInterface.
 - Android VpnService foreground lifecycle, system VPN permission flow and TUN establishment.
 - Android network interface discovery, default-network monitoring and connection-owner lookup.
 - sing-box URLTest group can periodically test and automatically select among imported nodes.
-- Application UID network byte counters are displayed in the connection panel.
+- Per-connection application UID network byte deltas are displayed in the connection panel.
 - JUnit parser tests run in GitHub Actions before APK assembly.
 
 ## Validation status
